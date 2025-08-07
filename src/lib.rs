@@ -115,6 +115,16 @@ impl CPUState {
         }
     }
 
+    fn get_register_pair(&self, rp: RegisterPair) -> u16 {
+        match rp {
+            RegisterPair::BC => pair_to_u16([self.registers.c, self.registers.b]),
+            RegisterPair::DE => pair_to_u16([self.registers.e, self.registers.d]),
+            RegisterPair::HL => pair_to_u16([self.registers.l, self.registers.h]),
+            RegisterPair::PC => self.registers.program_counter,
+            RegisterPair::SP => self.registers.stack_pointer,
+        }
+    }
+
     fn get_address_pc(&self) -> u16 {
         self.registers.program_counter
     }
@@ -539,6 +549,8 @@ const LIMIT: usize = 100;
 pub enum StepError {
     OpCodeError(#[from] OpCodeError),
     RegisterError(#[from] RegisterError),
+    #[error("there was no register pair corresponding to {0}")]
+    RegisterPairError(u8),
     #[error("the opcode {0:?} is currently unimplemented")]
     Unimplemented(OpCode),
 }
@@ -738,6 +750,33 @@ impl CPU {
                     self.cpu_state.execute_op(op);
                     self.push_command(op);
                 }
+            }
+            OpCode::LxiB | OpCode::LxiD | OpCode::LxiH => {
+                let rp_code = (instruction & 0b00110000) >> 4;
+                let rp = match rp_code {
+                    0b00 => Some(RegisterPair::BC),
+                    0b01 => Some(RegisterPair::DE),
+                    0b10 => Some(RegisterPair::HL),
+                    _ => {
+                        None
+                    }
+                };
+
+                let value = self.read_double_bytes();
+
+                if rp.is_none() {
+                    return Err(StepError::RegisterPairError(rp_code));
+                }
+
+                let rp = rp.unwrap();
+                let op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(rp),
+                    new_value: value,
+                    register: rp,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
             }
             _ => {
                 return Err(StepError::Unimplemented(opcode));

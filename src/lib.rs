@@ -14,7 +14,7 @@ bitflags! {
 }
 
 fn pair_to_u16(pair: [u8; 2]) -> u16 {
-    (pair[0] as u16) + (pair[1] as u16) << 8
+    (pair[0] as u16) + ((pair[1] as u16) << 8)
 }
 
 fn u16_to_pair(value: u16) -> [u8; 2] {
@@ -89,7 +89,7 @@ impl CPUState {
         return Self {
             memory: [0; 0x10000],
             registers: RegisterState {
-                a: 0x01,
+                a: 0,
                 b: 0,
                 c: 0,
                 d: 0,
@@ -115,12 +115,21 @@ impl CPUState {
         }
     }
 
-    fn get_address(&self) -> u16 {
+    fn get_address_pc(&self) -> u16 {
         self.registers.program_counter
     }
 
-    fn get_memory(&self) -> u8 {
-        self.memory[self.get_address() as usize]
+    fn get_address_hl(&self) -> u16 {
+        pair_to_u16([self.registers.l, self.registers.h])
+    }
+
+    fn get_memory_pc(&self) -> u8 {
+        self.memory[self.get_address_pc() as usize]
+    }
+
+    fn get_memory_hl(&self) -> u8 {
+        let address = pair_to_u16([self.registers.l, self.registers.h]);
+        self.get_memory_at(address)
     }
 
     fn get_memory_at(&self, address: u16) -> u8 {
@@ -129,83 +138,75 @@ impl CPUState {
 
     fn execute_op(&mut self, operation: Operation) {
         match operation {
-            Operation::Register(register_op) => {
-                match register_op.register {
-                    Register::A => self.registers.a = register_op.new_value,
-                    Register::B => self.registers.b = register_op.new_value,
-                    Register::C => self.registers.c = register_op.new_value,
-                    Register::D => self.registers.d = register_op.new_value,
-                    Register::E => self.registers.e = register_op.new_value,
-                    Register::H => self.registers.h = register_op.new_value,
-                    Register::L => self.registers.l = register_op.new_value,
-                }
+            Operation::Register(register_op) => match register_op.register {
+                Register::A => self.registers.a = register_op.new_value,
+                Register::B => self.registers.b = register_op.new_value,
+                Register::C => self.registers.c = register_op.new_value,
+                Register::D => self.registers.d = register_op.new_value,
+                Register::E => self.registers.e = register_op.new_value,
+                Register::H => self.registers.h = register_op.new_value,
+                Register::L => self.registers.l = register_op.new_value,
             },
-            Operation::RegisterPair(rp_op) => {
-                match rp_op.register {
-                    RegisterPair::BC => {
-                        self.registers.b = u16_to_pair(rp_op.new_value)[0];
-                        self.registers.c = u16_to_pair(rp_op.new_value)[1];
-                    }
-                    RegisterPair::PC => {
-                        self.registers.program_counter = rp_op.new_value;
-                    }
-                    RegisterPair::DE => {
-                        self.registers.d = u16_to_pair(rp_op.new_value)[0];
-                        self.registers.e = u16_to_pair(rp_op.new_value)[1];
-                    }
-                    RegisterPair::SP => {
-                        self.registers.stack_pointer = rp_op.new_value;
-                    }
-                    RegisterPair::HL => {
-                        self.registers.h = u16_to_pair(rp_op.new_value)[0];
-                        self.registers.l = u16_to_pair(rp_op.new_value)[1];
-                    }
+            Operation::RegisterPair(rp_op) => match rp_op.register {
+                RegisterPair::BC => {
+                    self.registers.b = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.c = u16_to_pair(rp_op.new_value)[1];
+                }
+                RegisterPair::PC => {
+                    self.registers.program_counter = rp_op.new_value;
+                }
+                RegisterPair::DE => {
+                    self.registers.d = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.e = u16_to_pair(rp_op.new_value)[1];
+                }
+                RegisterPair::SP => {
+                    self.registers.stack_pointer = rp_op.new_value;
+                }
+                RegisterPair::HL => {
+                    self.registers.h = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.l = u16_to_pair(rp_op.new_value)[1];
                 }
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.new_value;
-            },
+            }
         }
     }
 
     fn undo_op(&mut self, operation: Operation) {
         match operation {
-            Operation::Register(register_op) => {
-                match register_op.register {
-                    Register::A => self.registers.a = register_op.old_value,
-                    Register::B => self.registers.b = register_op.old_value,
-                    Register::C => self.registers.c = register_op.old_value,
-                    Register::D => self.registers.d = register_op.old_value,
-                    Register::E => self.registers.e = register_op.old_value,
-                    Register::H => self.registers.h = register_op.old_value,
-                    Register::L => self.registers.l = register_op.old_value,
-                }
+            Operation::Register(register_op) => match register_op.register {
+                Register::A => self.registers.a = register_op.old_value,
+                Register::B => self.registers.b = register_op.old_value,
+                Register::C => self.registers.c = register_op.old_value,
+                Register::D => self.registers.d = register_op.old_value,
+                Register::E => self.registers.e = register_op.old_value,
+                Register::H => self.registers.h = register_op.old_value,
+                Register::L => self.registers.l = register_op.old_value,
             },
-            Operation::RegisterPair(rp_op) => {
-                match rp_op.register {
-                    RegisterPair::BC => {
-                        self.registers.b = u16_to_pair(rp_op.old_value)[0];
-                        self.registers.c = u16_to_pair(rp_op.old_value)[1];
-                    }
-                    RegisterPair::PC => {
-                        self.registers.program_counter = rp_op.old_value;
-                    }
-                    RegisterPair::DE => {
-                        self.registers.d = u16_to_pair(rp_op.old_value)[0];
-                        self.registers.e = u16_to_pair(rp_op.old_value)[1];
-                    }
-                    RegisterPair::SP => {
-                        self.registers.stack_pointer = rp_op.old_value;
-                    }
-                    RegisterPair::HL => {
-                        self.registers.h = u16_to_pair(rp_op.old_value)[0];
-                        self.registers.l = u16_to_pair(rp_op.old_value)[1];
-                    }
+            Operation::RegisterPair(rp_op) => match rp_op.register {
+                RegisterPair::BC => {
+                    self.registers.b = u16_to_pair(rp_op.old_value)[0];
+                    self.registers.c = u16_to_pair(rp_op.old_value)[1];
+                }
+                RegisterPair::PC => {
+                    self.registers.program_counter = rp_op.old_value;
+                }
+                RegisterPair::DE => {
+                    self.registers.d = u16_to_pair(rp_op.old_value)[0];
+                    self.registers.e = u16_to_pair(rp_op.old_value)[1];
+                }
+                RegisterPair::SP => {
+                    self.registers.stack_pointer = rp_op.old_value;
+                }
+                RegisterPair::HL => {
+                    self.registers.h = u16_to_pair(rp_op.old_value)[0];
+                    self.registers.l = u16_to_pair(rp_op.old_value)[1];
                 }
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.old_value;
-            },
+            }
         }
     }
 }
@@ -564,14 +565,15 @@ impl CPU {
 
     pub fn load_data(&mut self, data: &[u8], address: u16) {
         assert!(data.len() - address as usize <= 0x10000);
-        self.cpu_state.memory[(address as usize)..(address as usize) + data.len()].copy_from_slice(data);
+        self.cpu_state.memory[(address as usize)..(address as usize) + data.len()]
+            .copy_from_slice(data);
     }
 
     fn read_byte(&mut self) -> u8 {
-        let value = self.cpu_state.get_memory();
+        let value = self.cpu_state.get_memory_pc();
         let op = Operation::RegisterPair(RegisterPairOperation {
-            old_value: self.cpu_state.get_address(),
-            new_value: self.cpu_state.get_address() + 1,
+            old_value: self.cpu_state.get_address_pc(),
+            new_value: self.cpu_state.get_address_pc() + 1,
             register: RegisterPair::PC,
         });
         self.cpu_state.execute_op(op);
@@ -580,13 +582,13 @@ impl CPU {
     }
 
     fn read_double_bytes(&mut self) -> u16 {
-        let value0 = self.cpu_state.get_memory();
+        let value0 = self.cpu_state.get_memory_pc();
         let value1 = self
             .cpu_state
-            .get_memory_at(self.cpu_state.get_address() + 1);
+            .get_memory_at(self.cpu_state.get_address_pc() + 1);
         let op = Operation::RegisterPair(RegisterPairOperation {
-            old_value: self.cpu_state.get_address(),
-            new_value: self.cpu_state.get_address() + 2,
+            old_value: self.cpu_state.get_address_pc(),
+            new_value: self.cpu_state.get_address_pc() + 2,
             register: RegisterPair::PC,
         });
         self.cpu_state.execute_op(op);
@@ -646,7 +648,7 @@ impl CPU {
             | OpCode::MovHC
             | OpCode::MovHD
             | OpCode::MovHE
-            | OpCode::MovHH 
+            | OpCode::MovHH
             | OpCode::MovHL
             | OpCode::MovHM
             | OpCode::MovLA
@@ -654,7 +656,7 @@ impl CPU {
             | OpCode::MovLC
             | OpCode::MovLD
             | OpCode::MovLE
-            | OpCode::MovLH 
+            | OpCode::MovLH
             | OpCode::MovLL
             | OpCode::MovLM
             | OpCode::MovMA
@@ -662,7 +664,7 @@ impl CPU {
             | OpCode::MovMC
             | OpCode::MovMD
             | OpCode::MovME
-            | OpCode::MovMH 
+            | OpCode::MovMH
             | OpCode::MovML => {
                 let source: u8 = instruction & 0b00000111;
                 let destination: u8 = (instruction & 0b00111000) >> 3;
@@ -683,9 +685,9 @@ impl CPU {
                 } else if source_register.is_ok() {
                     let source_register = source_register.unwrap();
                     let op = Operation::Memory(MemoryOperation {
-                        address: self.cpu_state.get_address(),
-                        old_value: self.cpu_state.get_memory(),
-                        new_value: self.cpu_state.get_register(source_register)
+                        address: self.cpu_state.get_address_hl(),
+                        old_value: self.cpu_state.get_memory_hl(),
+                        new_value: self.cpu_state.get_register(source_register),
                     });
 
                     self.cpu_state.execute_op(op);
@@ -694,7 +696,7 @@ impl CPU {
                     let destination_register = destination_register.unwrap();
                     let op = Operation::Register(RegisterOperation {
                         old_value: self.cpu_state.get_register(destination_register),
-                        new_value: self.cpu_state.get_memory(),
+                        new_value: self.cpu_state.get_memory_hl(),
                         register: destination_register,
                     });
 
@@ -702,6 +704,39 @@ impl CPU {
                     self.push_command(op);
                 } else {
                     return Err(StepError::RegisterError(source_register.err().unwrap()));
+                }
+            }
+            OpCode::MviA
+            | OpCode::MviB
+            | OpCode::MviC
+            | OpCode::MviD
+            | OpCode::MviE
+            | OpCode::MviH
+            | OpCode::MviL
+            | OpCode::MviM => {
+                let destination = (instruction & 0b00111000) >> 3;
+                let destination_register = Register::try_from(destination);
+                let value = self.read_byte();
+
+                if destination_register.is_ok() {
+                    let destination_register = destination_register.unwrap();
+                    let op = Operation::Register(RegisterOperation {
+                        old_value: self.cpu_state.get_register(destination_register),
+                        new_value: value,
+                        register: destination_register,
+                    });
+
+                    self.cpu_state.execute_op(op);
+                    self.push_command(op);
+                } else {
+                    let op = Operation::Memory(MemoryOperation {
+                        address: self.cpu_state.get_address_hl(),
+                        old_value: self.cpu_state.get_memory_hl(),
+                        new_value: value,
+                    });
+
+                    self.cpu_state.execute_op(op);
+                    self.push_command(op);
                 }
             }
             _ => {

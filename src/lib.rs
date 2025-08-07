@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 bitflags! {
-    #[derive(Debug)]
+    #[derive(Copy, Clone, Debug)]
     struct Flags: u8 {
         const CARRY = 1 << 0;
         const PARITY = 1 << 2;
@@ -103,6 +103,10 @@ impl CPUState {
         };
     }
 
+    fn get_flags(&self) -> Flags {
+        self.registers.flags
+    }
+
     fn get_register(&self, register: Register) -> u8 {
         match register {
             Register::A => self.registers.a,
@@ -179,7 +183,10 @@ impl CPUState {
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.new_value;
-            }
+            },
+            Operation::Flags(flags_op) => {
+                self.registers.flags = flags_op.new_flags;
+            },
         }
     }
 
@@ -216,9 +223,18 @@ impl CPUState {
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.old_value;
-            }
+            },
+            Operation::Flags(flags_op) => {
+                self.registers.flags = flags_op.old_flags;
+            },
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct FlagsOperation {
+    old_flags: Flags,
+    new_flags: Flags,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -247,6 +263,7 @@ enum Operation {
     Register(RegisterOperation),
     RegisterPair(RegisterPairOperation),
     Memory(MemoryOperation),
+    Flags(FlagsOperation),
 }
 
 #[derive(Debug)]
@@ -757,9 +774,7 @@ impl CPU {
                     0b00 => Some(RegisterPair::BC),
                     0b01 => Some(RegisterPair::DE),
                     0b10 => Some(RegisterPair::HL),
-                    _ => {
-                        None
-                    }
+                    _ => None,
                 };
 
                 let value = self.read_double_bytes();
@@ -777,6 +792,60 @@ impl CPU {
 
                 self.cpu_state.execute_op(op);
                 self.push_command(op);
+            }
+            OpCode::AddA
+            | OpCode::AddB
+            | OpCode::AddC
+            | OpCode::AddD
+            | OpCode::AddE
+            | OpCode::AddH
+            | OpCode::AddL
+            | OpCode::AddM => {
+                let source = instruction & 0b00000111;
+                let source_register = Register::try_from(source);
+
+                if source_register.is_ok() {
+                    let source_register = source_register.unwrap();
+                    let (sum, carry) = self.cpu_state.get_register(Register::A).overflowing_add(self.cpu_state.get_register(source_register));
+                    let mut new_flags = self.cpu_state.get_flags().clone();
+                    new_flags.set(Flags::CARRY, carry);
+                    let add_op = Operation::Register(RegisterOperation {
+                        old_value: self.cpu_state.get_register(Register::A),
+                        new_value: sum,
+                        register: Register::A,
+                    });
+
+                    self.cpu_state.execute_op(add_op);
+                    self.push_command(add_op);
+
+                    let flags_op = Operation::Flags(FlagsOperation {
+                        old_flags: self.cpu_state.get_flags(),
+                        new_flags: new_flags,
+                    });
+
+                    self.cpu_state.execute_op(flags_op);
+                    self.push_command(flags_op);
+                } else {
+                    let (sum, carry) = self.cpu_state.get_register(Register::A).overflowing_add(self.cpu_state.get_memory_hl());
+                    let mut new_flags = self.cpu_state.get_flags().clone();
+                    new_flags.set(Flags::CARRY, carry);
+                    let add_op = Operation::Register(RegisterOperation {
+                        old_value: self.cpu_state.get_register(Register::A),
+                        new_value: sum,
+                        register: Register::A,
+                    });
+
+                    self.cpu_state.execute_op(add_op);
+                    self.push_command(add_op);
+
+                    let flags_op = Operation::Flags(FlagsOperation {
+                        old_flags: self.cpu_state.get_flags(),
+                        new_flags: new_flags,
+                    });
+
+                    self.cpu_state.execute_op(flags_op);
+                    self.push_command(flags_op);
+                }
             }
             _ => {
                 return Err(StepError::Unimplemented(opcode));

@@ -21,6 +21,15 @@ fn u16_to_pair(value: u16) -> [u8; 2] {
     [(value & 0x00ff) as u8, ((value & 0xff00) >> 8) as u8]
 }
 
+fn get_parity(value: u8) -> bool {
+    let mut result = 0;
+    for i in 0..8 {
+        result ^= (value & (1 << i)) >> i;
+    }
+
+    return result == 0;
+}
+
 #[derive(Copy, Clone, Debug)]
 enum Register {
     B = 0b000,
@@ -57,11 +66,30 @@ impl TryFrom<u8> for Register {
 
 #[derive(Copy, Clone, Debug)]
 enum RegisterPair {
-    BC,
-    DE,
-    HL,
-    SP,
+    BC = 0b00,
+    DE = 0b01,
+    HL = 0b10,
+    SP = 0b11,
     PC,
+}
+
+#[derive(Error, Debug)]
+pub enum RegisterPairError {
+    #[error("the value {0} does not correspond to a register pair")]
+    Unused(u8),
+}
+
+impl TryFrom<u8> for RegisterPair {
+    type Error = RegisterPairError;
+    fn try_from(value: u8) -> Result<Self, RegisterPairError> {
+        match value {
+            x if x == RegisterPair::BC as u8 => Ok(RegisterPair::BC),
+            x if x == RegisterPair::DE as u8 => Ok(RegisterPair::DE),
+            x if x == RegisterPair::HL as u8 => Ok(RegisterPair::HL),
+            x if x == RegisterPair::SP as u8 => Ok(RegisterPair::SP),
+            _ => Err(RegisterPairError::Unused(value)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -183,10 +211,10 @@ impl CPUState {
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.new_value;
-            },
+            }
             Operation::Flags(flags_op) => {
                 self.registers.flags = flags_op.new_flags;
-            },
+            }
         }
     }
 
@@ -223,10 +251,10 @@ impl CPUState {
             },
             Operation::Memory(memory_op) => {
                 self.memory[memory_op.address as usize] = memory_op.old_value;
-            },
+            }
             Operation::Flags(flags_op) => {
                 self.registers.flags = flags_op.old_flags;
-            },
+            }
         }
     }
 }
@@ -570,6 +598,8 @@ pub enum StepError {
     RegisterPairError(u8),
     #[error("the opcode {0:?} is currently unimplemented")]
     Unimplemented(OpCode),
+    #[error("the program recieved a halt signal")]
+    Halt,
 }
 
 impl CPU {
@@ -626,7 +656,33 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
-    pub fn step(&mut self) -> Result<(), StepError> {
+    fn push_add_op(&mut self, sum: u8, carry: bool) {
+        let mut new_flags = self.cpu_state.get_flags().clone();
+
+        new_flags.set(Flags::CARRY, carry);
+        new_flags.set(Flags::ZERO, sum == 0);
+        new_flags.set(Flags::SIGN, 0b10000000 & sum != 0);
+        new_flags.set(Flags::PARITY, get_parity(sum));
+
+        let add_op = Operation::Register(RegisterOperation {
+            old_value: self.cpu_state.get_register(Register::A),
+            new_value: sum,
+            register: Register::A,
+        });
+
+        self.cpu_state.execute_op(add_op);
+        self.push_command(add_op);
+
+        let flags_op = Operation::Flags(FlagsOperation {
+            old_flags: self.cpu_state.get_flags(),
+            new_flags: new_flags,
+        });
+
+        self.cpu_state.execute_op(flags_op);
+        self.push_command(flags_op);
+    }
+
+    pub fn step_forward(&mut self) -> Result<(), StepError> {
         let instruction = self.read_byte();
         let opcode = OpCode::try_from(instruction)?;
 
@@ -806,15 +862,111 @@ impl CPU {
 
                 if source_register.is_ok() {
                     let source_register = source_register.unwrap();
-                    let (sum, carry) = self.cpu_state.get_register(Register::A).overflowing_add(self.cpu_state.get_register(source_register));
+                    let (sum, carry) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_add(self.cpu_state.get_register(source_register));
+                    self.push_add_op(sum, carry);
+                } else {
+                    let (sum, carry) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_add(self.cpu_state.get_memory_hl());
+                    self.push_add_op(sum, carry);
+                }
+            }
+            OpCode::AdcA
+            | OpCode::AdcB
+            | OpCode::AdcC
+            | OpCode::AdcD
+            | OpCode::AdcE
+            | OpCode::AdcH
+            | OpCode::AdcL
+            | OpCode::AdcM => {
+                let source = instruction & 0b00000111;
+                let source_register = Register::try_from(source);
+
+                if source_register.is_ok() {
+                    let source_register = source_register.unwrap();
+                    let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
+                    let (sum0, carry0) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_add(self.cpu_state.get_register(source_register));
+                    let (sum1, carry1) = sum0.overflowing_add(old_carry);
+                    self.push_add_op(sum1, carry1 && carry0);
+                } else {
+                    let source_register = source_register.unwrap();
+                    let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
+                    let (sum0, carry0) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_add(self.cpu_state.get_register(source_register));
+                    let (sum1, carry1) = sum0.overflowing_add(old_carry);
+                    self.push_add_op(sum1, carry1 && carry0)
+                }
+            }
+            OpCode::Adi => {
+                let value = self.read_byte();
+                let (sum, carry) = self
+                    .cpu_state
+                    .get_register(Register::A)
+                    .overflowing_add(value);
+
+                self.push_add_op(sum, carry);
+            }
+            OpCode::Aci => {
+                let value = self.read_byte();
+                let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
+                let (sum0, carry0) = self
+                    .cpu_state
+                    .get_register(Register::A)
+                    .overflowing_add(value);
+                let (sum1, carry1) = sum0.overflowing_add(old_carry);
+
+                self.push_add_op(sum1, carry0 && carry1);
+            }
+            OpCode::InrA
+            | OpCode::InrB
+            | OpCode::InrC
+            | OpCode::InrD
+            | OpCode::InrE
+            | OpCode::InrH
+            | OpCode::InrL
+            | OpCode::InrM => {
+                let destination: u8 = (instruction & 0b00111000) >> 3;
+                let destination_register = Register::try_from(destination);
+
+                if destination_register.is_ok() {
+                    let destination_register = destination_register.unwrap();
+                    let (sum, carry) = self
+                        .cpu_state
+                        .get_register(destination_register)
+                        .overflowing_add(1);
+                    self.push_add_op(sum, carry);
+                } else {
+                    let (sum, carry) = self.cpu_state.get_memory_hl().overflowing_add(1);
+                    self.push_add_op(sum, carry);
+                }
+            }
+            OpCode::DadB | OpCode::DadD | OpCode::DadH | OpCode::DadSP => {
+                let source = (0b00110000 & instruction) >> 4;
+                let source_rp = RegisterPair::try_from(source);
+
+                if source_rp.is_ok() {
+                    let source_rp = source_rp.unwrap();
+                    let (sum, carry) = self
+                        .cpu_state
+                        .get_register_pair(source_rp)
+                        .overflowing_add(self.cpu_state.get_register_pair(RegisterPair::HL));
                     let mut new_flags = self.cpu_state.get_flags().clone();
                     new_flags.set(Flags::CARRY, carry);
-                    let add_op = Operation::Register(RegisterOperation {
-                        old_value: self.cpu_state.get_register(Register::A),
-                        new_value: sum,
-                        register: Register::A,
-                    });
 
+                    let add_op = Operation::RegisterPair(RegisterPairOperation {
+                        old_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                        new_value: sum,
+                        register: RegisterPair::HL,
+                    });
                     self.cpu_state.execute_op(add_op);
                     self.push_command(add_op);
 
@@ -822,30 +974,14 @@ impl CPU {
                         old_flags: self.cpu_state.get_flags(),
                         new_flags: new_flags,
                     });
-
                     self.cpu_state.execute_op(flags_op);
                     self.push_command(flags_op);
                 } else {
-                    let (sum, carry) = self.cpu_state.get_register(Register::A).overflowing_add(self.cpu_state.get_memory_hl());
-                    let mut new_flags = self.cpu_state.get_flags().clone();
-                    new_flags.set(Flags::CARRY, carry);
-                    let add_op = Operation::Register(RegisterOperation {
-                        old_value: self.cpu_state.get_register(Register::A),
-                        new_value: sum,
-                        register: Register::A,
-                    });
-
-                    self.cpu_state.execute_op(add_op);
-                    self.push_command(add_op);
-
-                    let flags_op = Operation::Flags(FlagsOperation {
-                        old_flags: self.cpu_state.get_flags(),
-                        new_flags: new_flags,
-                    });
-
-                    self.cpu_state.execute_op(flags_op);
-                    self.push_command(flags_op);
+                    return Err(StepError::RegisterPairError(source));
                 }
+            }
+            OpCode::Hlt => {
+                return Err(StepError::Halt);
             }
             _ => {
                 return Err(StepError::Unimplemented(opcode));
@@ -854,5 +990,18 @@ impl CPU {
 
         self.instruction_count += 1;
         Ok(())
+    }
+
+    pub fn execute(&mut self) {
+        loop {
+            if let Err(err) = self.step_forward() {
+                match err {
+                    StepError::Halt => break,
+                    _ => {
+                        eprintln!("{}", err);
+                    }
+                }
+            }
+        }
     }
 }

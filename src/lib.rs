@@ -191,22 +191,22 @@ impl CPUState {
             },
             Operation::RegisterPair(rp_op) => match rp_op.register {
                 RegisterPair::BC => {
-                    self.registers.b = u16_to_pair(rp_op.new_value)[0];
-                    self.registers.c = u16_to_pair(rp_op.new_value)[1];
+                    self.registers.c = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.b = u16_to_pair(rp_op.new_value)[1];
                 }
                 RegisterPair::PC => {
                     self.registers.program_counter = rp_op.new_value;
                 }
                 RegisterPair::DE => {
-                    self.registers.d = u16_to_pair(rp_op.new_value)[0];
-                    self.registers.e = u16_to_pair(rp_op.new_value)[1];
+                    self.registers.e = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.d = u16_to_pair(rp_op.new_value)[1];
                 }
                 RegisterPair::SP => {
                     self.registers.stack_pointer = rp_op.new_value;
                 }
                 RegisterPair::HL => {
-                    self.registers.h = u16_to_pair(rp_op.new_value)[0];
-                    self.registers.l = u16_to_pair(rp_op.new_value)[1];
+                    self.registers.l = u16_to_pair(rp_op.new_value)[0];
+                    self.registers.h = u16_to_pair(rp_op.new_value)[1];
                 }
             },
             Operation::Memory(memory_op) => {
@@ -529,7 +529,7 @@ convertible! {
         Rst0,
         Rz,
         Ret,
-        JZ,
+        Jz,
         Cz = 0xCC,
         Call,
         Aci,
@@ -654,6 +654,18 @@ impl CPU {
         self.push_command(op);
 
         pair_to_u16([value0, value1])
+    }
+
+    fn push_jmp(&mut self) {
+        let address = self.read_double_bytes();
+        let op = Operation::RegisterPair(RegisterPairOperation {
+            old_value: self.cpu_state.get_address_pc(),
+            new_value: address,
+            register: RegisterPair::PC,
+        });
+
+        self.cpu_state.execute_op(op);
+        self.push_command(op);
     }
 
     fn push_sub_mem_op(&mut self, difference: u8, carry: bool) {
@@ -1152,6 +1164,23 @@ impl CPU {
                     self.push_sub_op(difference1, carry0 && carry1, Register::A);
                 }
             }
+            // OpCode::CmpA
+            // | OpCode::CmpB
+            // | OpCode::CmpC
+            // | OpCode::CmpD
+            // | OpCode::CmpE
+            // | OpCode::CmpH
+            // | OpCode::CmpL
+            // | OpCode::CmpM => {
+            //     let source = instruction & 0b00000111;
+            //     let source_register = Register::try_from(source);
+            //
+            //     if let Ok(source_register) = source_register {
+            //         let mut new_flags = self.cpu_state.get_flags().clone();
+            //         new_flags.set(Flags::ZERO, );
+            //     } else {
+            //     }
+            // }
             OpCode::DcrA
             | OpCode::DcrB
             | OpCode::DcrC
@@ -1160,7 +1189,7 @@ impl CPU {
             | OpCode::DcrH
             | OpCode::DcrL
             | OpCode::DcrM => {
-                let destination = (instruction & 0b00110000) >> 4;
+                let destination = (instruction & 0b00111000) >> 3;
                 let destination_register = Register::try_from(destination);
 
                 if let Ok(destination_register) = destination_register {
@@ -1195,8 +1224,67 @@ impl CPU {
                     return Err(StepError::RegisterPairError(destination));
                 }
             }
+            OpCode::Jmp => {
+                self.push_jmp();
+            }
             OpCode::Hlt => {
                 return Err(StepError::Halt);
+            }
+            OpCode::Jc => {
+                if self.cpu_state.get_flags().contains(Flags::CARRY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jnc => {
+                if !self.cpu_state.get_flags().contains(Flags::CARRY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jz => {
+                if self.cpu_state.get_flags().contains(Flags::ZERO) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jnz => {
+                if !self.cpu_state.get_flags().contains(Flags::ZERO) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jp => {
+                if !self.cpu_state.get_flags().contains(Flags::SIGN) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jm => {
+                if self.cpu_state.get_flags().contains(Flags::SIGN) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jpe => {
+                if self.cpu_state.get_flags().contains(Flags::PARITY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Jpo => {
+                if !self.cpu_state.get_flags().contains(Flags::PARITY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
             }
             _ => {
                 return Err(StepError::Unimplemented(opcode));
@@ -1207,7 +1295,8 @@ impl CPU {
         Ok(())
     }
 
-    pub fn execute(&mut self) {
+    pub fn execute(&mut self, entrypoint: u16) {
+        self.cpu_state.registers.program_counter = entrypoint;
         loop {
             if let Err(err) = self.step_forward() {
                 match err {

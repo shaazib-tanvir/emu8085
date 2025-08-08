@@ -1026,6 +1026,24 @@ impl CPU {
                     self.push_add_mem_op(sum, carry);
                 }
             }
+            OpCode::InxB | OpCode::InxD | OpCode::InxH | OpCode::InxSp => {
+                let destination = (0b00110000 & instruction) >> 4;
+                let destination_rp = RegisterPair::try_from(destination);
+                
+                if let Ok(destination_rp) = destination_rp {
+                    let sum = self.cpu_state.get_register_pair(destination_rp).wrapping_add(1);
+                    let op = Operation::RegisterPair(RegisterPairOperation {
+                        old_value: self.cpu_state.get_register_pair(destination_rp),
+                        new_value: sum,
+                        register: destination_rp,
+                    });
+
+                    self.cpu_state.execute_op(op);
+                    self.push_command(op);
+                } else {
+                    return Err(StepError::RegisterPairError(destination));
+                }
+            }
             OpCode::DadB | OpCode::DadD | OpCode::DadH | OpCode::DadSP => {
                 let source = (0b00110000 & instruction) >> 4;
                 let source_rp = RegisterPair::try_from(source);

@@ -1029,9 +1029,12 @@ impl CPU {
             OpCode::InxB | OpCode::InxD | OpCode::InxH | OpCode::InxSp => {
                 let destination = (0b00110000 & instruction) >> 4;
                 let destination_rp = RegisterPair::try_from(destination);
-                
+
                 if let Ok(destination_rp) = destination_rp {
-                    let sum = self.cpu_state.get_register_pair(destination_rp).wrapping_add(1);
+                    let sum = self
+                        .cpu_state
+                        .get_register_pair(destination_rp)
+                        .wrapping_add(1);
                     let op = Operation::RegisterPair(RegisterPairOperation {
                         old_value: self.cpu_state.get_register_pair(destination_rp),
                         new_value: sum,
@@ -1169,6 +1172,27 @@ impl CPU {
                 } else {
                     let (difference, carry) = self.cpu_state.get_memory_hl().overflowing_sub(1);
                     self.push_sub_mem_op(difference, carry);
+                }
+            }
+            OpCode::DcxB | OpCode::DcxD | OpCode::DcxH | OpCode::DcxSP => {
+                let destination = (0b00110000 & instruction) >> 4;
+                let destination_rp = RegisterPair::try_from(destination);
+
+                if let Ok(destination_rp) = destination_rp {
+                    let difference = self
+                        .cpu_state
+                        .get_register_pair(destination_rp)
+                        .wrapping_sub(1);
+                    let op = Operation::RegisterPair(RegisterPairOperation {
+                        old_value: self.cpu_state.get_register_pair(destination_rp),
+                        new_value: difference,
+                        register: destination_rp,
+                    });
+
+                    self.cpu_state.execute_op(op);
+                    self.push_command(op);
+                } else {
+                    return Err(StepError::RegisterPairError(destination));
                 }
             }
             OpCode::Hlt => {

@@ -656,12 +656,38 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
+    fn push_sub_op(&mut self, difference: u8, carry: bool) {
+        let mut new_flags = self.cpu_state.get_flags().clone();
+
+        new_flags.set(Flags::CARRY, carry);
+        new_flags.set(Flags::ZERO, difference == 0);
+        new_flags.set(Flags::SIGN, (0b10000000 & difference) != 0);
+        new_flags.set(Flags::PARITY, get_parity(difference));
+
+        let sub_op = Operation::Register(RegisterOperation {
+            old_value: self.cpu_state.get_register(Register::A),
+            new_value: difference,
+            register: Register::A,
+        });
+
+        self.cpu_state.execute_op(sub_op);
+        self.push_command(sub_op);
+
+        let flags_op = Operation::Flags(FlagsOperation {
+            old_flags: self.cpu_state.get_flags(),
+            new_flags: new_flags,
+        });
+
+        self.cpu_state.execute_op(flags_op);
+        self.push_command(flags_op);
+    }
+
     fn push_add_op(&mut self, sum: u8, carry: bool) {
         let mut new_flags = self.cpu_state.get_flags().clone();
 
         new_flags.set(Flags::CARRY, carry);
         new_flags.set(Flags::ZERO, sum == 0);
-        new_flags.set(Flags::SIGN, 0b10000000 & sum != 0);
+        new_flags.set(Flags::SIGN, (0b10000000 & sum) != 0);
         new_flags.set(Flags::PARITY, get_parity(sum));
 
         let add_op = Operation::Register(RegisterOperation {
@@ -978,6 +1004,80 @@ impl CPU {
                     self.push_command(flags_op);
                 } else {
                     return Err(StepError::RegisterPairError(source));
+                }
+            }
+            OpCode::Sui => {
+                let value = self.read_byte();
+                // to future me: yes, the carry flag is the fucking borrow flag in this and someone
+                // thought this is a good idea
+                let (difference, carry) = self
+                    .cpu_state
+                    .get_register(Register::A)
+                    .overflowing_sub(value);
+                self.push_sub_op(difference, carry);
+            }
+            OpCode::Sbi => {
+                let value = self.read_byte();
+
+                let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
+                let (difference0, carry0) = self
+                    .cpu_state
+                    .get_register(Register::A)
+                    .overflowing_sub(value);
+                let (difference1, carry1) = difference0.overflowing_sub(old_carry);
+                self.push_sub_op(difference1, carry0 && carry1);
+            }
+            OpCode::SubA
+            | OpCode::SubB
+            | OpCode::SubC
+            | OpCode::SubD
+            | OpCode::SubE
+            | OpCode::SubH
+            | OpCode::SubL
+            | OpCode::SubM => {
+                let source = 0b00000111 & instruction;
+                let source_register = Register::try_from(source);
+
+                if let Ok(source_register) = source_register {
+                    let (difference, carry) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_sub(self.cpu_state.get_register(source_register));
+                    self.push_sub_op(difference, carry);
+                } else {
+                    let (difference, carry) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_sub(self.cpu_state.get_memory_hl());
+                    self.push_sub_op(difference, carry);
+                }
+            }
+            OpCode::SbbA
+            | OpCode::SbbB
+            | OpCode::SbbC
+            | OpCode::SbbD
+            | OpCode::SbbE
+            | OpCode::SbbH
+            | OpCode::SbbL
+            | OpCode::SbbM => {
+                let source = 0b00000111 & instruction;
+                let source_register = Register::try_from(source);
+
+                let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
+                if let Ok(source_register) = source_register {
+                    let (difference0, carry0) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_sub(self.cpu_state.get_register(source_register));
+                    let (difference1, carry1) = difference0.overflowing_sub(old_carry);
+                    self.push_sub_op(difference1, carry0 && carry1);
+                } else {
+                    let (difference0, carry0) = self
+                        .cpu_state
+                        .get_register(Register::A)
+                        .overflowing_sub(self.cpu_state.get_memory_hl());
+                    let (difference1, carry1) = difference0.overflowing_sub(old_carry);
+                    self.push_sub_op(difference1, carry0 && carry1);
                 }
             }
             OpCode::Hlt => {

@@ -656,7 +656,7 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
-    fn push_sub_op(&mut self, difference: u8, carry: bool) {
+    fn push_sub_mem_op(&mut self, difference: u8, carry: bool) {
         let mut new_flags = self.cpu_state.get_flags().clone();
 
         new_flags.set(Flags::CARRY, carry);
@@ -664,10 +664,10 @@ impl CPU {
         new_flags.set(Flags::SIGN, (0b10000000 & difference) != 0);
         new_flags.set(Flags::PARITY, get_parity(difference));
 
-        let sub_op = Operation::Register(RegisterOperation {
-            old_value: self.cpu_state.get_register(Register::A),
+        let sub_op = Operation::Memory(MemoryOperation {
+            old_value: self.cpu_state.get_memory_hl(),
             new_value: difference,
-            register: Register::A,
+            address: self.cpu_state.get_address_hl(),
         });
 
         self.cpu_state.execute_op(sub_op);
@@ -682,7 +682,59 @@ impl CPU {
         self.push_command(flags_op);
     }
 
-    fn push_add_op(&mut self, sum: u8, carry: bool) {
+    fn push_sub_op(&mut self, difference: u8, carry: bool, destination: Register) {
+        let mut new_flags = self.cpu_state.get_flags().clone();
+
+        new_flags.set(Flags::CARRY, carry);
+        new_flags.set(Flags::ZERO, difference == 0);
+        new_flags.set(Flags::SIGN, (0b10000000 & difference) != 0);
+        new_flags.set(Flags::PARITY, get_parity(difference));
+
+        let sub_op = Operation::Register(RegisterOperation {
+            old_value: self.cpu_state.get_register(destination),
+            new_value: difference,
+            register: destination,
+        });
+
+        self.cpu_state.execute_op(sub_op);
+        self.push_command(sub_op);
+
+        let flags_op = Operation::Flags(FlagsOperation {
+            old_flags: self.cpu_state.get_flags(),
+            new_flags: new_flags,
+        });
+
+        self.cpu_state.execute_op(flags_op);
+        self.push_command(flags_op);
+    }
+
+    fn push_add_mem_op(&mut self, sum: u8, carry: bool) {
+        let mut new_flags = self.cpu_state.get_flags().clone();
+
+        new_flags.set(Flags::CARRY, carry);
+        new_flags.set(Flags::ZERO, sum == 0);
+        new_flags.set(Flags::SIGN, (0b10000000 & sum) != 0);
+        new_flags.set(Flags::PARITY, get_parity(sum));
+
+        let add_op = Operation::Memory(MemoryOperation {
+            old_value: self.cpu_state.get_memory_hl(),
+            new_value: sum,
+            address: self.cpu_state.get_address_hl(),
+        });
+
+        self.cpu_state.execute_op(add_op);
+        self.push_command(add_op);
+
+        let flags_op = Operation::Flags(FlagsOperation {
+            old_flags: self.cpu_state.get_flags(),
+            new_flags: new_flags,
+        });
+
+        self.cpu_state.execute_op(flags_op);
+        self.push_command(flags_op);
+    }
+
+    fn push_add_op(&mut self, sum: u8, carry: bool, destination: Register) {
         let mut new_flags = self.cpu_state.get_flags().clone();
 
         new_flags.set(Flags::CARRY, carry);
@@ -691,9 +743,9 @@ impl CPU {
         new_flags.set(Flags::PARITY, get_parity(sum));
 
         let add_op = Operation::Register(RegisterOperation {
-            old_value: self.cpu_state.get_register(Register::A),
+            old_value: self.cpu_state.get_register(destination),
             new_value: sum,
-            register: Register::A,
+            register: destination,
         });
 
         self.cpu_state.execute_op(add_op);
@@ -892,13 +944,13 @@ impl CPU {
                         .cpu_state
                         .get_register(Register::A)
                         .overflowing_add(self.cpu_state.get_register(source_register));
-                    self.push_add_op(sum, carry);
+                    self.push_add_op(sum, carry, Register::A);
                 } else {
                     let (sum, carry) = self
                         .cpu_state
                         .get_register(Register::A)
                         .overflowing_add(self.cpu_state.get_memory_hl());
-                    self.push_add_op(sum, carry);
+                    self.push_add_op(sum, carry, Register::A);
                 }
             }
             OpCode::AdcA
@@ -920,16 +972,15 @@ impl CPU {
                         .get_register(Register::A)
                         .overflowing_add(self.cpu_state.get_register(source_register));
                     let (sum1, carry1) = sum0.overflowing_add(old_carry);
-                    self.push_add_op(sum1, carry1 && carry0);
+                    self.push_add_op(sum1, carry1 && carry0, Register::A);
                 } else {
-                    let source_register = source_register.unwrap();
                     let old_carry = self.cpu_state.get_flags().contains(Flags::CARRY) as u8;
                     let (sum0, carry0) = self
                         .cpu_state
                         .get_register(Register::A)
-                        .overflowing_add(self.cpu_state.get_register(source_register));
+                        .overflowing_add(self.cpu_state.get_memory_hl());
                     let (sum1, carry1) = sum0.overflowing_add(old_carry);
-                    self.push_add_op(sum1, carry1 && carry0)
+                    self.push_add_op(sum1, carry1 && carry0, Register::A);
                 }
             }
             OpCode::Adi => {
@@ -939,7 +990,7 @@ impl CPU {
                     .get_register(Register::A)
                     .overflowing_add(value);
 
-                self.push_add_op(sum, carry);
+                self.push_add_op(sum, carry, Register::A);
             }
             OpCode::Aci => {
                 let value = self.read_byte();
@@ -950,7 +1001,7 @@ impl CPU {
                     .overflowing_add(value);
                 let (sum1, carry1) = sum0.overflowing_add(old_carry);
 
-                self.push_add_op(sum1, carry0 && carry1);
+                self.push_add_op(sum1, carry0 && carry1, Register::A);
             }
             OpCode::InrA
             | OpCode::InrB
@@ -969,10 +1020,10 @@ impl CPU {
                         .cpu_state
                         .get_register(destination_register)
                         .overflowing_add(1);
-                    self.push_add_op(sum, carry);
+                    self.push_add_op(sum, carry, destination_register);
                 } else {
                     let (sum, carry) = self.cpu_state.get_memory_hl().overflowing_add(1);
-                    self.push_add_op(sum, carry);
+                    self.push_add_mem_op(sum, carry);
                 }
             }
             OpCode::DadB | OpCode::DadD | OpCode::DadH | OpCode::DadSP => {
@@ -1014,7 +1065,7 @@ impl CPU {
                     .cpu_state
                     .get_register(Register::A)
                     .overflowing_sub(value);
-                self.push_sub_op(difference, carry);
+                self.push_sub_op(difference, carry, Register::A);
             }
             OpCode::Sbi => {
                 let value = self.read_byte();
@@ -1025,7 +1076,7 @@ impl CPU {
                     .get_register(Register::A)
                     .overflowing_sub(value);
                 let (difference1, carry1) = difference0.overflowing_sub(old_carry);
-                self.push_sub_op(difference1, carry0 && carry1);
+                self.push_sub_op(difference1, carry0 && carry1, Register::A);
             }
             OpCode::SubA
             | OpCode::SubB
@@ -1043,13 +1094,13 @@ impl CPU {
                         .cpu_state
                         .get_register(Register::A)
                         .overflowing_sub(self.cpu_state.get_register(source_register));
-                    self.push_sub_op(difference, carry);
+                    self.push_sub_op(difference, carry, Register::A);
                 } else {
                     let (difference, carry) = self
                         .cpu_state
                         .get_register(Register::A)
                         .overflowing_sub(self.cpu_state.get_memory_hl());
-                    self.push_sub_op(difference, carry);
+                    self.push_sub_op(difference, carry, Register::A);
                 }
             }
             OpCode::SbbA
@@ -1070,14 +1121,36 @@ impl CPU {
                         .get_register(Register::A)
                         .overflowing_sub(self.cpu_state.get_register(source_register));
                     let (difference1, carry1) = difference0.overflowing_sub(old_carry);
-                    self.push_sub_op(difference1, carry0 && carry1);
+                    self.push_sub_op(difference1, carry0 && carry1, Register::A);
                 } else {
                     let (difference0, carry0) = self
                         .cpu_state
                         .get_register(Register::A)
                         .overflowing_sub(self.cpu_state.get_memory_hl());
                     let (difference1, carry1) = difference0.overflowing_sub(old_carry);
-                    self.push_sub_op(difference1, carry0 && carry1);
+                    self.push_sub_op(difference1, carry0 && carry1, Register::A);
+                }
+            }
+            OpCode::DcrA
+            | OpCode::DcrB
+            | OpCode::DcrC
+            | OpCode::DcrD
+            | OpCode::DcrE
+            | OpCode::DcrH
+            | OpCode::DcrL
+            | OpCode::DcrM => {
+                let destination = (instruction & 0b00110000) >> 4;
+                let destination_register = Register::try_from(destination);
+
+                if let Ok(destination_register) = destination_register {
+                    let (difference, carry) = self
+                        .cpu_state
+                        .get_register(destination_register)
+                        .overflowing_sub(1);
+                    self.push_sub_op(difference, carry, destination_register);
+                } else {
+                    let (difference, carry) = self.cpu_state.get_memory_hl().overflowing_sub(1);
+                    self.push_sub_mem_op(difference, carry);
                 }
             }
             OpCode::Hlt => {

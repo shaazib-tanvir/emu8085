@@ -187,6 +187,14 @@ impl CPUState {
         pair_to_u16([self.registers.l, self.registers.h])
     }
 
+    fn get_address_de(&self) -> u16 {
+        pair_to_u16([self.registers.e, self.registers.d])
+    }
+
+    fn get_address_bc(&self) -> u16 {
+        pair_to_u16([self.registers.c, self.registers.b])
+    }
+
     fn get_memory_pc(&self) -> u8 {
         self.memory[self.get_address_pc() as usize]
     }
@@ -399,7 +407,7 @@ convertible! {
         MviL,
         Cma,
         Sim,
-        LxiSP,
+        LxiSp,
         Sta,
         InxSp,
         InrM,
@@ -969,18 +977,13 @@ impl CPU {
                     self.push_command(op);
                 }
             }
-            OpCode::LxiB | OpCode::LxiD | OpCode::LxiH => {
+            OpCode::LxiB | OpCode::LxiD | OpCode::LxiH | OpCode::LxiSp => {
                 let rp_code = (instruction & 0b00110000) >> 4;
-                let rp = match rp_code {
-                    0b00 => Some(RegisterPair::BC),
-                    0b01 => Some(RegisterPair::DE),
-                    0b10 => Some(RegisterPair::HL),
-                    _ => None,
-                };
+                let rp = RegisterPair::try_from(rp_code);
 
                 let value = self.read_double_bytes();
 
-                if rp.is_none() {
+                if rp.is_err() {
                     return Err(StepError::RegisterPairError(rp_code));
                 }
 
@@ -993,6 +996,115 @@ impl CPU {
 
                 self.cpu_state.execute_op(op);
                 self.push_command(op);
+            }
+            OpCode::StaxB | OpCode::StaxD => {
+                let value = self.cpu_state.get_register(Register::A);
+                let address = match opcode {
+                    OpCode::StaxB => self.cpu_state.get_address_bc(),
+                    OpCode::StaxD => self.cpu_state.get_address_de(),
+                    _ => panic!("unreachable"),
+                };
+
+                let op = Operation::Memory(MemoryOperation {
+                    address: address,
+                    old_value: self.cpu_state.get_memory_at(address),
+                    new_value: value,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::LdaxB | OpCode::LdaxD => {
+                let address = match opcode {
+                    OpCode::StaxB => self.cpu_state.get_address_bc(),
+                    OpCode::StaxD => self.cpu_state.get_address_de(),
+                    _ => panic!("unreachable"),
+                };
+
+                let op = Operation::Register(RegisterOperation {
+                    old_value: self.cpu_state.get_register(Register::A),
+                    new_value: self.cpu_state.get_memory_at(address),
+                    register: Register::A,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Sta => {
+                let op = Operation::Memory(MemoryOperation {
+                    address: self.cpu_state.get_address_hl(),
+                    old_value: self.cpu_state.get_memory_hl(),
+                    new_value: self.cpu_state.get_register(Register::A),
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Lda => {
+                let op = Operation::Register(RegisterOperation {
+                    register: Register::A,
+                    old_value: self.cpu_state.get_register(Register::A),
+                    new_value: self.cpu_state.get_memory_hl(),
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Shld => {
+                let address = self.read_double_bytes();
+
+                let op_lower = Operation::Memory(MemoryOperation {
+                    address: address,
+                    old_value: self.cpu_state.get_memory_at(address),
+                    new_value: self.cpu_state.get_register(Register::L),
+                });
+
+                let op_higher = Operation::Memory(MemoryOperation {
+                    address: address.wrapping_add(1),
+                    old_value: self.cpu_state.get_memory_at(address.wrapping_add(1)),
+                    new_value: self.cpu_state.get_register(Register::H),
+                });
+
+                self.cpu_state.execute_op(op_lower);
+                self.cpu_state.execute_op(op_higher);
+                self.push_command(op_lower);
+                self.push_command(op_higher);
+            }
+            OpCode::Lhld => {
+                let address = self.read_double_bytes();
+
+                let op = Operation::RegisterPair(RegisterPairOperation {
+                    register: RegisterPair::HL,
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                    new_value: pair_to_u16([
+                        self.cpu_state.get_memory_at(address),
+                        self.cpu_state.get_memory_at(address.wrapping_add(1)),
+                    ]),
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Xchg => {
+                let de = self.cpu_state.get_register_pair(RegisterPair::DE);
+                let hl = self.cpu_state.get_register_pair(RegisterPair::HL);
+
+                let op_hl = Operation::RegisterPair(RegisterPairOperation {
+                    register: RegisterPair::HL,
+                    old_value: hl,
+                    new_value: de,
+                });
+
+                let op_de = Operation::RegisterPair(RegisterPairOperation {
+                    register: RegisterPair::DE,
+                    old_value: de,
+                    new_value: hl,
+                });
+
+                self.cpu_state.execute_op(op_hl);
+                self.cpu_state.execute_op(op_de);
+                self.push_command(op_hl);
+                self.push_command(op_de);
             }
             OpCode::AddA
             | OpCode::AddB
@@ -1271,11 +1383,7 @@ impl CPU {
                 let value = self.read_byte();
 
                 let mut new_flags = self.cpu_state.get_flags().clone();
-                match self
-                    .cpu_state
-                    .get_register(Register::A)
-                    .cmp(&value)
-                {
+                match self.cpu_state.get_register(Register::A).cmp(&value) {
                     Ordering::Equal => new_flags.set(Flags::ZERO, true),
                     Ordering::Greater => {
                         new_flags.set(Flags::ZERO, false);

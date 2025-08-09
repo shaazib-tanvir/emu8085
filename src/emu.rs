@@ -653,7 +653,7 @@ impl CPU {
     }
 
     pub fn load_data(&mut self, data: &[u8], address: u16) {
-        assert!(data.len() - address as usize <= 0x10000);
+        assert!(data.len() + address as usize <= 0x10000);
         self.cpu_state.memory[(address as usize)..(address as usize) + data.len()]
             .copy_from_slice(data);
     }

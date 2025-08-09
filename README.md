@@ -8,7 +8,10 @@
 
 ### Features
 
-- [x] Basic Emulation
+- [x] Arithmetic & Logic Instructions
+- [x] Jump Instructions
+- [ ] Stack Instructions
+- [ ] Function Calling
 - [ ] Assembler
 - [ ] GUI
 

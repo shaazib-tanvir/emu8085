@@ -117,6 +117,8 @@ enum OperandParseError {
     Rp(#[from] RegisterPairError),
     #[error("failed to parse: {0}")]
     ParseU8(ParseIntError),
+    #[error("{0}")]
+    Label(String),
 }
 
 #[derive(Error, Debug)]
@@ -129,6 +131,26 @@ enum InstructionError {
     UnknownMnemonic(String),
     #[error("fatal error: unreachable code")]
     Unreachable,
+}
+
+fn parse_label(label: &str) -> Result<Word, OperandParseError> {
+    let mut chars = label.chars();
+    let first_char = chars.next();
+    if let Some(first_char) = first_char {
+        if !first_char.is_alphabetic() {
+            return Err(OperandParseError::Label("labels must start with an alphabet".to_string()));
+        }
+    } else {
+        return Ok(Word::Label(label.to_string()));
+    }
+
+    for char in chars {
+        if char.is_alphanumeric() {
+            return Err(OperandParseError::Label("labels must only contain alphanumeric characters".to_string()));
+        }
+    }
+
+    return Ok(Word::Label(label.to_string()));
 }
 
 fn parse_rm_rm(operands: &str) -> Result<(RegMem, RegMem), OperandParseError> {
@@ -161,7 +183,7 @@ fn parse_rm_byte(operands: &str) -> Result<(RegMem, u8), OperandParseError> {
     } else {
         Err(OperandParseError::InsufficientOperands {
             expected: 2,
-            got: 1
+            got: 1,
         })
     }
 }
@@ -172,7 +194,7 @@ fn parse_rm_word(operands: &str) -> Result<(RegisterPair, Word), OperandParseErr
         let destination = RegisterPair::try_from(operands.0)?;
         let value = u16::from_str_radix(operands.1, 16);
         if value.is_err() {
-            let value = Word::Label(operands.1.to_string());
+            let value = parse_label(operands.1)?;
             Ok((destination, value))
         } else {
             let value: Word = Word::U16(value.unwrap());
@@ -181,7 +203,7 @@ fn parse_rm_word(operands: &str) -> Result<(RegisterPair, Word), OperandParseErr
     } else {
         Err(OperandParseError::InsufficientOperands {
             expected: 2,
-            got: 1
+            got: 1,
         })
     }
 }
@@ -189,7 +211,7 @@ fn parse_rm_word(operands: &str) -> Result<(RegisterPair, Word), OperandParseErr
 fn parse_word(operands: &str) -> Result<Word, OperandParseError> {
     let value = u16::from_str_radix(operands, 16);
     if value.is_err() {
-        let value = Word::Label(operands.to_string());
+        let value = parse_label(operands)?;
         Ok(value)
     } else {
         let value: Word = Word::U16(value.unwrap());
@@ -234,9 +256,7 @@ impl Instruction {
                 let opcode = 0b01000000 + ((destination as u8) << 3) + (source as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::RMRM(InstructionRMRM {
-                    opcode: opcode,
-                }))
+                Ok(Instruction::RMRM(InstructionRMRM { opcode: opcode }))
             }
             "mvi" => {
                 if operands.is_none() {
@@ -244,7 +264,7 @@ impl Instruction {
                         OperandParseError::InsufficientOperands {
                             expected: 2,
                             got: 0,
-                        }
+                        },
                     ));
                 }
 
@@ -265,10 +285,10 @@ impl Instruction {
                         OperandParseError::InsufficientOperands {
                             expected: 2,
                             got: 0,
-                        }
+                        },
                     ));
                 }
-                
+
                 let operands = operands.unwrap();
                 let (destination, value) = parse_rm_word(&operands)?;
                 let opcode = 0b00000001 + ((destination as u8) << 4);
@@ -282,10 +302,10 @@ impl Instruction {
             "stax" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1,
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -294,20 +314,18 @@ impl Instruction {
                 let opcode = match rp {
                     RegisterPair::BC => Ok(OpCode::StaxB),
                     RegisterPair::DE => Ok(OpCode::StaxD),
-                    _ => Err(InstructionError::Unreachable)
+                    _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::Rp(InstructionRp {
-                    opcode: opcode
-                }))
+                Ok(Instruction::Rp(InstructionRp { opcode: opcode }))
             }
             "ldax" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1,
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -316,21 +334,18 @@ impl Instruction {
                 let opcode = match rp {
                     RegisterPair::BC => Ok(OpCode::LdaxB),
                     RegisterPair::DE => Ok(OpCode::LdaxD),
-                    _ => Err(InstructionError::Unreachable)
+                    _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::Rp(InstructionRp {
-                    opcode: opcode
-                }))
-
+                Ok(Instruction::Rp(InstructionRp { opcode: opcode }))
             }
             "sta" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1, 
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -341,15 +356,15 @@ impl Instruction {
                 return Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }))
+                }));
             }
             "lda" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1, 
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -360,15 +375,15 @@ impl Instruction {
                 return Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }))
+                }));
             }
             "shld" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1, 
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -379,15 +394,15 @@ impl Instruction {
                 return Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }))
+                }));
             }
             "lhld" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1, 
-                                got: 0,
-                            }
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -398,7 +413,7 @@ impl Instruction {
                 return Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }))
+                }));
             }
             "xchg" => {
                 if operands.is_some() {

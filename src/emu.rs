@@ -1,4 +1,4 @@
-use crate::common::{OpCode, OpCodeError};
+use crate::common::{OpCode, OpCodeError, RegisterError, Register,RegisterPair};
 use bitflags::bitflags;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -51,68 +51,6 @@ fn get_parity(value: u8) -> bool {
     }
 
     return result == 0;
-}
-
-#[derive(Copy, Clone, Debug)]
-enum Register {
-    B = 0b000,
-    C = 0b001,
-    D = 0b010,
-    E = 0b011,
-    H = 0b100,
-    L = 0b101,
-    A = 0b111,
-}
-
-#[derive(Error, Debug)]
-pub enum RegisterError {
-    #[error("the value {0} does not correspond to a register")]
-    Unused(u8),
-}
-
-impl TryFrom<u8> for Register {
-    type Error = RegisterError;
-    fn try_from(value: u8) -> Result<Register, RegisterError> {
-        match value {
-            x if x == Register::A as u8 => Ok(Register::A),
-            x if x == Register::B as u8 => Ok(Register::B),
-            x if x == Register::C as u8 => Ok(Register::C),
-            x if x == Register::D as u8 => Ok(Register::D),
-            x if x == Register::E as u8 => Ok(Register::E),
-            x if x == Register::H as u8 => Ok(Register::H),
-            x if x == Register::L as u8 => Ok(Register::L),
-
-            _ => Err(RegisterError::Unused(value)),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-enum RegisterPair {
-    BC = 0b00,
-    DE = 0b01,
-    HL = 0b10,
-    SP = 0b11,
-    PC,
-}
-
-#[derive(Error, Debug)]
-pub enum RegisterPairError {
-    #[error("the value {0} does not correspond to a register pair")]
-    Unused(u8),
-}
-
-impl TryFrom<u8> for RegisterPair {
-    type Error = RegisterPairError;
-    fn try_from(value: u8) -> Result<Self, RegisterPairError> {
-        match value {
-            x if x == RegisterPair::BC as u8 => Ok(RegisterPair::BC),
-            x if x == RegisterPair::DE as u8 => Ok(RegisterPair::DE),
-            x if x == RegisterPair::HL as u8 => Ok(RegisterPair::HL),
-            x if x == RegisterPair::SP as u8 => Ok(RegisterPair::SP),
-            _ => Err(RegisterPairError::Unused(value)),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1446,6 +1384,38 @@ impl CPU {
                 } else {
                     _ = self.read_double_bytes();
                 }
+            }
+            OpCode::Cma => {
+                let op = Operation::Register(RegisterOperation {
+                    old_value: self.cpu_state.get_register(Register::A),
+                    new_value: !self.cpu_state.get_register(Register::A),
+                    register: Register::A,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Stc => {
+                let mut new_flags = self.cpu_state.get_flags().clone();
+                new_flags.set(Flags::CARRY, true);
+                let op = Operation::Flags(FlagsOperation {
+                    old_flags: self.cpu_state.get_flags(),
+                    new_flags: new_flags,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
+            }
+            OpCode::Cmc => {
+                let mut new_flags = self.cpu_state.get_flags().clone();
+                new_flags.set(Flags::CARRY, !new_flags.contains(Flags::CARRY));
+                let op = Operation::Flags(FlagsOperation {
+                    old_flags: self.cpu_state.get_flags(),
+                    new_flags: new_flags,
+                });
+
+                self.cpu_state.execute_op(op);
+                self.push_command(op);
             }
             _ => {
                 return Err(StepError::Unimplemented(opcode));

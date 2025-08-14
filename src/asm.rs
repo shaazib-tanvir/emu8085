@@ -138,7 +138,9 @@ fn parse_label(label: &str) -> Result<Word, OperandParseError> {
     let first_char = chars.next();
     if let Some(first_char) = first_char {
         if !first_char.is_alphabetic() {
-            return Err(OperandParseError::Label("labels must start with an alphabet".to_string()));
+            return Err(OperandParseError::Label(
+                "labels must start with an alphabet".to_string(),
+            ));
         }
     } else {
         return Ok(Word::Label(label.to_string()));
@@ -146,7 +148,9 @@ fn parse_label(label: &str) -> Result<Word, OperandParseError> {
 
     for char in chars {
         if char.is_alphanumeric() {
-            return Err(OperandParseError::Label("labels must only contain alphanumeric characters".to_string()));
+            return Err(OperandParseError::Label(
+                "labels must only contain alphanumeric characters".to_string(),
+            ));
         }
     }
 
@@ -422,6 +426,186 @@ impl Instruction {
 
                 return Ok(Instruction::Imp(InstructionImp {
                     opcode: OpCode::Xchg,
+                }));
+            }
+            "jmp" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jmp;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jc" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jc;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jnc" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jnc;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jz" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jz;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jnz" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jnz;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jp" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jp;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jm" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jm;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jpe" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jpe;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "jpo" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_word(&operands)?;
+                let opcode = OpCode::Jpo;
+
+                return Ok(Instruction::ImWord(InstructionImWord {
+                    opcode: opcode,
+                    operand: value,
+                }));
+            }
+            "pchl" => {
+                if operands.is_some() {
+                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
+                }
+
+                return Ok(Instruction::Imp(InstructionImp {
+                    opcode: OpCode::Pchl,
                 }));
             }
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),

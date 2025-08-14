@@ -41,6 +41,16 @@ mod tests {
             panic!("expected rp,value instruction, found {:?}", instruction);
         }
     }
+
+    #[test]
+    fn dcx_parse() {
+        let instruction = Instruction::parse("dcx h");
+        if let Ok(Instruction::Rp(instruction)) = instruction {
+            assert_eq!(instruction.opcode, OpCode::DcxH);
+        } else {
+            panic!("expected rp instruction, found {:?}", instruction);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -607,6 +617,78 @@ impl Instruction {
                 return Ok(Instruction::Imp(InstructionImp {
                     opcode: OpCode::Pchl,
                 }));
+            }
+            "inr" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b00000100 + ((rm as u8) << 3);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                return Ok(Instruction::RM(InstructionRM { opcode: opcode }));
+            }
+            "dcr" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b00000101 + ((rm as u8) << 3);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                return Ok(Instruction::RM(InstructionRM { opcode: opcode }));
+            }
+            "inx" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rp = parse_rp(&operands)?;
+
+                let opcode = 0b00000011 + ((rp as u8) << 4);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                return Ok(Instruction::Rp(InstructionRp { opcode: opcode }));
+            }
+            "dcx" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rp = parse_rp(&operands)?;
+
+                let opcode = 0b00001011 + ((rp as u8) << 4);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                return Ok(Instruction::Rp(InstructionRp { opcode: opcode }));
             }
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }

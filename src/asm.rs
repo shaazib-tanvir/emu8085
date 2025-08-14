@@ -10,7 +10,7 @@ mod tests {
     #[test]
     fn mov_parse() {
         let instruction = Instruction::parse("mov a,m");
-        if let Ok(Instruction::RMRM(instruction)) = instruction {
+        if let Ok(Instruction::NoData(instruction)) = instruction {
             assert_eq!(instruction.opcode, OpCode::MovAM);
         } else {
             panic!("expected rm,rm instruction, found {:?}", instruction);
@@ -20,9 +20,9 @@ mod tests {
     #[test]
     fn mvi_parse() {
         let instruction = Instruction::parse("mvi m,1f");
-        if let Ok(Instruction::RMImByte(instruction)) = instruction {
+        if let Ok(Instruction::ImByte(instruction)) = instruction {
             assert_eq!(instruction.opcode, OpCode::MviM);
-            assert_eq!(instruction.value, 0x1f);
+            assert_eq!(instruction.operand, 0x1f);
         } else {
             panic!("expected rm,value instruction, found {:?}", instruction);
         }
@@ -31,11 +31,11 @@ mod tests {
     #[test]
     fn lxi_parse() {
         let instruction = Instruction::parse("lxi h, 2050");
-        if let Ok(Instruction::RpImWord(instruction)) = instruction {
+        if let Ok(Instruction::ImWord(instruction)) = instruction {
             assert_eq!(instruction.opcode, OpCode::LxiH);
-            match instruction.value {
+            match instruction.operand {
                 Word::U16(value) => assert_eq!(value, 0x2050),
-                _ => panic!("value is `{:?}` instead of 0x2050", instruction.value),
+                _ => panic!("value is `{:?}` instead of 0x2050", instruction.operand),
             }
         } else {
             panic!("expected rp,value instruction, found {:?}", instruction);
@@ -45,10 +45,31 @@ mod tests {
     #[test]
     fn dcx_parse() {
         let instruction = Instruction::parse("dcx h");
-        if let Ok(Instruction::Rp(instruction)) = instruction {
+        if let Ok(Instruction::NoData(instruction)) = instruction {
             assert_eq!(instruction.opcode, OpCode::DcxH);
         } else {
             panic!("expected rp instruction, found {:?}", instruction);
+        }
+    }
+
+    #[test]
+    fn dad_parse() {
+        let instruction = Instruction::parse("dad d");
+        if let Ok(Instruction::NoData(instruction)) = instruction {
+            assert_eq!(instruction.opcode, OpCode::DadD);
+        } else {
+            panic!("expected rp instruction, found {:?}", instruction);
+        }
+    }
+
+    #[test]
+    fn sui_parse() {
+        let instruction = Instruction::parse("sui 4d");
+        if let Ok(Instruction::ImByte(instruction)) = instruction {
+            assert_eq!(instruction.opcode, OpCode::Sui);
+            assert_eq!(instruction.operand, 0x4d);
+        } else {
+            panic!("expected im byte instruction, found {:?}", instruction);
         }
     }
 }
@@ -72,47 +93,15 @@ struct InstructionImWord {
 }
 
 #[derive(Debug)]
-struct InstructionImp {
+struct InstructionNoData {
     opcode: OpCode,
-}
-
-#[derive(Debug)]
-struct InstructionRM {
-    opcode: OpCode,
-}
-
-#[derive(Debug)]
-struct InstructionRp {
-    opcode: OpCode,
-}
-
-#[derive(Debug)]
-struct InstructionRMRM {
-    opcode: OpCode,
-}
-
-#[derive(Debug)]
-struct InstructionRMImByte {
-    opcode: OpCode,
-    value: u8,
-}
-
-#[derive(Debug)]
-struct InstructionRpImWord {
-    opcode: OpCode,
-    value: Word,
 }
 
 #[derive(Debug)]
 enum Instruction {
     ImByte(InstructionImByte),
     ImWord(InstructionImWord),
-    Imp(InstructionImp),
-    RM(InstructionRM),
-    Rp(InstructionRp),
-    RMRM(InstructionRMRM),
-    RMImByte(InstructionRMImByte),
-    RpImWord(InstructionRpImWord),
+    NoData(InstructionNoData),
 }
 
 #[derive(Error, Debug)]
@@ -222,6 +211,14 @@ fn parse_rm_word(operands: &str) -> Result<(RegisterPair, Word), OperandParseErr
     }
 }
 
+fn parse_byte(operands: &str) -> Result<u8, OperandParseError> {
+    let value = u8::from_str_radix(operands, 16);
+    match value {
+        Ok(value) => Ok(value),
+        Err(value) => Err(OperandParseError::ParseU8(value)),
+    }
+}
+
 fn parse_word(operands: &str) -> Result<Word, OperandParseError> {
     let value = u16::from_str_radix(operands, 16);
     if value.is_err() {
@@ -270,7 +267,7 @@ impl Instruction {
                 let opcode = 0b01000000 + ((destination as u8) << 3) + (source as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::RMRM(InstructionRMRM { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "mvi" => {
                 if operands.is_none() {
@@ -288,9 +285,9 @@ impl Instruction {
                 let opcode = 0b00000110 + ((destination as u8) << 3);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::RMImByte(InstructionRMImByte {
+                Ok(Instruction::ImByte(InstructionImByte {
                     opcode: opcode,
-                    value: value,
+                    operand: value,
                 }))
             }
             "lxi" => {
@@ -308,9 +305,9 @@ impl Instruction {
                 let opcode = 0b00000001 + ((destination as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::RpImWord(InstructionRpImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
-                    value: value,
+                    operand: value,
                 }))
             }
             "stax" => {
@@ -331,7 +328,7 @@ impl Instruction {
                     _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::Rp(InstructionRp { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "ldax" => {
                 if operands.is_none() {
@@ -351,7 +348,7 @@ impl Instruction {
                     _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::Rp(InstructionRp { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "sta" => {
                 if operands.is_none() {
@@ -367,10 +364,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Sta;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "lda" => {
                 if operands.is_none() {
@@ -386,10 +383,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Lda;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "shld" => {
                 if operands.is_none() {
@@ -405,10 +402,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Shld;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "lhld" => {
                 if operands.is_none() {
@@ -424,19 +421,19 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Lhld;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "xchg" => {
                 if operands.is_some() {
                     return Err(InstructionError::OperandParse(OperandParseError::NoOp));
                 }
 
-                return Ok(Instruction::Imp(InstructionImp {
+                Ok(Instruction::NoData(InstructionNoData {
                     opcode: OpCode::Xchg,
-                }));
+                }))
             }
             "jmp" => {
                 if operands.is_none() {
@@ -452,10 +449,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jmp;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jc" => {
                 if operands.is_none() {
@@ -471,10 +468,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jc;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jnc" => {
                 if operands.is_none() {
@@ -490,10 +487,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jnc;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jz" => {
                 if operands.is_none() {
@@ -509,10 +506,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jz;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jnz" => {
                 if operands.is_none() {
@@ -528,10 +525,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jnz;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jp" => {
                 if operands.is_none() {
@@ -547,10 +544,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jp;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jm" => {
                 if operands.is_none() {
@@ -566,10 +563,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jm;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jpe" => {
                 if operands.is_none() {
@@ -585,10 +582,10 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jpe;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "jpo" => {
                 if operands.is_none() {
@@ -604,19 +601,19 @@ impl Instruction {
                 let value = parse_word(&operands)?;
                 let opcode = OpCode::Jpo;
 
-                return Ok(Instruction::ImWord(InstructionImWord {
+                Ok(Instruction::ImWord(InstructionImWord {
                     opcode: opcode,
                     operand: value,
-                }));
+                }))
             }
             "pchl" => {
                 if operands.is_some() {
                     return Err(InstructionError::OperandParse(OperandParseError::NoOp));
                 }
 
-                return Ok(Instruction::Imp(InstructionImp {
+                Ok(Instruction::NoData(InstructionNoData {
                     opcode: OpCode::Pchl,
-                }));
+                }))
             }
             "inr" => {
                 if operands.is_none() {
@@ -634,7 +631,7 @@ impl Instruction {
                 let opcode = 0b00000100 + ((rm as u8) << 3);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                return Ok(Instruction::RM(InstructionRM { opcode: opcode }));
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "dcr" => {
                 if operands.is_none() {
@@ -652,7 +649,7 @@ impl Instruction {
                 let opcode = 0b00000101 + ((rm as u8) << 3);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                return Ok(Instruction::RM(InstructionRM { opcode: opcode }));
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "inx" => {
                 if operands.is_none() {
@@ -670,7 +667,7 @@ impl Instruction {
                 let opcode = 0b00000011 + ((rp as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                return Ok(Instruction::Rp(InstructionRp { opcode: opcode }));
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
             "dcx" => {
                 if operands.is_none() {
@@ -688,7 +685,169 @@ impl Instruction {
                 let opcode = 0b00001011 + ((rp as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                return Ok(Instruction::Rp(InstructionRp { opcode: opcode }));
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "add" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b10000000 + (rm as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "adc" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b10001000 + (rm as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "adi" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_byte(&operands)?;
+
+                Ok(Instruction::ImByte(InstructionImByte {
+                    opcode: OpCode::Aci,
+                    operand: value,
+                }))
+            }
+            "aci" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_byte(&operands)?;
+
+                Ok(Instruction::ImByte(InstructionImByte {
+                    opcode: OpCode::Aci,
+                    operand: value,
+                }))
+            }
+            "dad" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rp = parse_rp(&operands)?;
+
+                let opcode = 0b00001001 + ((rp as u8) << 4);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "sub" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b10010000 + (rm as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "sbb" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b10011000 + (rm as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "sui" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_byte(&operands)?;
+
+                Ok(Instruction::ImByte(InstructionImByte {
+                    opcode: OpCode::Sui,
+                    operand: value,
+                }))
+            }
+            "sbi" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_byte(&operands)?;
+
+                Ok(Instruction::ImByte(InstructionImByte {
+                    opcode: OpCode::Sbi,
+                    operand: value,
+                }))
             }
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }

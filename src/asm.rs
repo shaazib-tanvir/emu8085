@@ -1,4 +1,5 @@
 use std::num::ParseIntError;
+use std::collections::HashMap;
 
 use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
 use thiserror::Error;
@@ -72,32 +73,41 @@ mod tests {
             panic!("expected im byte instruction, found {:?}", instruction);
         }
     }
+
+    #[test]
+    fn program_parse() {
+        let program = ".org 2000
+lxi h, 2050
+mov a, m";
+        let program = Program::parse(program);
+        assert!(program.is_ok(), "program did not parse: {:?}", program);
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Word {
     U16(u16),
     Label(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct InstructionImByte {
     opcode: OpCode,
     operand: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct InstructionImWord {
     opcode: OpCode,
     operand: Word,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct InstructionNoData {
     opcode: OpCode,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Instruction {
     ImByte(InstructionImByte),
     ImWord(InstructionImWord),
@@ -116,6 +126,8 @@ enum OperandParseError {
     Rp(#[from] RegisterPairError),
     #[error("failed to parse: {0}")]
     ParseU8(ParseIntError),
+    #[error("failed to parse: {0}")]
+    ParseU16(ParseIntError),
     #[error("{0}")]
     Label(String),
 }
@@ -142,7 +154,7 @@ fn parse_label(label: &str) -> Result<Word, OperandParseError> {
             ));
         }
     } else {
-        return Ok(Word::Label(label.to_string()));
+        return Err(OperandParseError::Label("labels must be non-empty".to_string()));
     }
 
     for char in chars {
@@ -851,5 +863,214 @@ impl Instruction {
             }
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }
+    }
+}
+
+#[derive(Error, Debug)]
+enum DirectiveError {
+    #[error("no directive `{0}` exists or is unimplimented")]
+    UnknownDirective(String),
+    #[error(transparent)]
+    Operand(#[from] OperandParseError),
+}
+
+#[derive(Debug, PartialEq)]
+enum Directive {
+    Org(u16),
+    Db(u8),
+    Rs,
+}
+
+impl Directive {
+    fn parse(line: &str) -> Result<Directive, DirectiveError> {
+        let line_split = line.split_once(" ");
+        let (mnemonic, operands);
+
+        match line_split {
+            Some(line_split) => {
+                (mnemonic, operands) = (line_split.0, Some(line_split.1));
+            }
+            None => {
+                (mnemonic, operands) = (line, None);
+            }
+        }
+
+        match mnemonic {
+            "org" => {
+                if operands.is_none() {
+                    return Err(DirectiveError::Operand(OperandParseError::InsufficientOperands {
+                        expected: 1,
+                        got: 0,
+                    }));
+                }
+
+                let operands = operands.unwrap();
+                let address = u16::from_str_radix(operands, 16);
+                if let Err(err) = address {
+                    return Err(DirectiveError::Operand(OperandParseError::ParseU16(err)));
+                } else {
+                    let address = address.unwrap();
+                    Ok(Directive::Org(address)) 
+                }
+            }
+            "db" => {
+                if operands.is_none() {
+                    return Err(DirectiveError::Operand(OperandParseError::InsufficientOperands {
+                        expected: 1,
+                        got: 0,
+                    }));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_byte(operands)?;
+
+                Ok(Directive::Db(value))
+            }
+            "rs" => {
+                if operands.is_some() {
+                    return Err(DirectiveError::Operand(OperandParseError::NoOp));
+                }
+
+                Ok(Directive::Rs)
+            }
+            _ => Err(DirectiveError::UnknownDirective(mnemonic.to_string()))
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Unit {
+    Instruction(Instruction),
+    Directive(Directive),
+}
+
+#[derive(Debug, PartialEq)]
+struct IntermediateUnit {
+    unit: Unit,
+    address: u16,
+}
+
+#[derive(Debug)]
+struct Program {
+    units: Vec<IntermediateUnit>,
+    label_table: HashMap<String, usize>,
+}
+
+#[derive(Error, Debug)]
+enum ProgramError{
+    #[error(transparent)]
+    Instruction(#[from] InstructionError),
+    #[error(transparent)]
+    Directive(#[from]DirectiveError),
+    #[error("no .org directive found, could not determine address")]
+    NoOrg,
+    #[error("unset labels can't appear twice in a row")]
+    UnsetLabel,
+}
+
+impl Program {
+    fn add_unit(line_unit: &str, mut address: Option<u16>) -> Result<(IntermediateUnit, u16), ProgramError> {
+        if line_unit.starts_with(".") {
+            let line_unit = &line_unit[1..];
+            let directive = Directive::parse(line_unit)?;
+
+            match directive {
+                Directive::Org(addr) => {
+                    address = Some(addr);
+                }
+                _ => {}
+            }
+
+            if address.is_none() {
+                return Err(ProgramError::NoOrg);
+            }
+            let address = address.unwrap();
+
+            let intermediate_unit = IntermediateUnit {
+                unit: Unit::Directive(directive),
+                address: address,
+            };
+
+            Ok((intermediate_unit, address))
+        } else {
+            if address.is_none() {
+                return Err(ProgramError::NoOrg);
+            }
+
+            let address = address.unwrap();
+            let instruction = Instruction::parse(line_unit)?;
+
+            let intermediate_unit = IntermediateUnit {
+                unit: Unit::Instruction(instruction),
+                address: address,
+            };
+
+            Ok((intermediate_unit, address))
+        }
+    }
+
+    fn parse(program: &str) -> Result<Program, ProgramError> {
+        let lines = program.lines();
+        let mut address = None;
+        let mut last_label = None;
+
+        let mut intermediate_units = vec![];
+        let mut label_table = HashMap::new();
+
+        for line in lines {
+            let line_split = line.split_once(":");
+            let (label, line_unit);
+            match line_split {
+                Some(line_split) => {
+                    (label, line_unit) = (Some(line_split.0), line_split.1);
+                }
+                None => {
+                    (label, line_unit) = (None, line);
+                }
+            }
+
+            let line_unit = line_unit.trim();
+
+            if label == None && line_unit == "" {
+                continue;
+            } else if label.is_some() && line_unit == "" {
+                if last_label.is_some() {
+                    return Err(ProgramError::UnsetLabel);
+                }
+
+                last_label = label;
+            } else if label.is_none() && line_unit != "" {
+                let intermediate_unit;
+                let addr;
+                (intermediate_unit, addr) = Self::add_unit(line_unit, address)?;
+                address = Some(addr);
+                intermediate_units.push(intermediate_unit);
+
+                if last_label.is_some() {
+                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                }
+
+                address = Some(address.unwrap() + 1);
+            } else {
+                let intermediate_unit;
+                let addr;
+                (intermediate_unit, addr) = Self::add_unit(line_unit, address)?;
+                address = Some(addr);
+                intermediate_units.push(intermediate_unit);
+
+                if last_label.is_some() {
+                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                }
+                let label = label.unwrap();
+                label_table.insert(label.to_string(), intermediate_units.len() - 1);
+
+                address = Some(address.unwrap() + 1);
+            }
+        }
+
+        Ok(Self {
+            units: intermediate_units,
+            label_table: label_table,
+        })
     }
 }

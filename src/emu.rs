@@ -1,4 +1,4 @@
-use crate::common::{OpCode, OpCodeError, RegisterError, Register,RegisterPair};
+use crate::common::{OpCode, OpCodeError, RegisterError, Register,RegisterPair, pair_to_u16, u16_to_pair};
 use bitflags::bitflags;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -34,14 +34,6 @@ bitflags! {
         const ZERO = 1 << 6;
         const SIGN = 1 << 7;
     }
-}
-
-fn pair_to_u16(pair: [u8; 2]) -> u16 {
-    (pair[0] as u16) + ((pair[1] as u16) << 8)
-}
-
-fn u16_to_pair(value: u16) -> [u8; 2] {
-    [(value & 0x00ff) as u8, ((value & 0xff00) >> 8) as u8]
 }
 
 fn get_parity(value: u8) -> bool {

@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 use std::collections::HashMap;
 
-use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
+use crate::common::{u16_to_pair, OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -102,6 +102,21 @@ mov a, m";
             address: 0x2003,
         });
     }
+
+    #[test]
+    fn program_assemble() {
+        let program = ".org 2000
+lxi h, 2050
+mov a, m";
+        let assembled_program = Program::assemble(program);
+        assert!(assembled_program.is_ok());
+        let assembled_program = assembled_program.unwrap();
+
+        assert_eq!(assembled_program[0x2000], OpCode::LxiH as u8);
+        assert_eq!(assembled_program[0x2001], 0x50);
+        assert_eq!(assembled_program[0x2002], 0x20);
+        assert_eq!(assembled_program[0x2003], OpCode::MovAM as u8);
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -162,6 +177,30 @@ enum InstructionError {
     UnknownMnemonic(String),
     #[error("fatal error: unreachable code")]
     Unreachable,
+}
+
+fn check_label(label: &str) -> Option<OperandParseError> {
+    let mut chars = label.chars();
+    let first_char = chars.next();
+    if let Some(first_char) = first_char {
+        if !first_char.is_alphabetic() {
+            return Some(OperandParseError::Label(
+                "labels must start with an alphabet".to_string(),
+            ));
+        }
+    } else {
+        return Some(OperandParseError::Label("labels must be non-empty".to_string()));
+    }
+
+    for char in chars {
+        if char.is_alphanumeric() {
+            return Some(OperandParseError::Label(
+                "labels must only contain alphanumeric characters".to_string(),
+            ));
+        }
+    }
+
+    return None
 }
 
 fn parse_label(label: &str) -> Result<Word, OperandParseError> {
@@ -988,6 +1027,14 @@ enum ProgramError{
     UnsetLabel,
 }
 
+#[derive(Error, Debug)]
+enum AssembleError{
+    #[error(transparent)]
+    Program(#[from] ProgramError),
+    #[error("label `{0}` was not found")]
+    LabelNotFound(String),
+}
+
 impl Program {
     fn add_unit(line_unit: &str, mut address: Option<u16>) -> Result<(IntermediateUnit, u16), ProgramError> {
         if line_unit.starts_with(".") {
@@ -1062,6 +1109,10 @@ impl Program {
             let (label, line_unit);
             match line_split {
                 Some(line_split) => {
+                    if let Some(error) = check_label(line_split.0) {
+                        return Err(ProgramError::Instruction(InstructionError::OperandParse(error)));
+                    }
+
                     (label, line_unit) = (Some(line_split.0), line_split.1);
                 }
                 None => {
@@ -1108,5 +1159,65 @@ impl Program {
             units: intermediate_units,
             label_table: label_table,
         })
+    }
+
+    pub fn assemble(program: &str) -> Result<[u8; 0x10000], AssembleError> {
+        let program = Program::parse(program)?;
+        let mut memory: [u8; 0x10000] = [0; 0x10000];
+        for intermediate_unit in &program.units {
+            match &intermediate_unit.unit {
+                Unit::Directive(directive) => {
+                    match directive {
+                        Directive::Db(value) => {
+                            memory[intermediate_unit.address as usize] = *value;
+                        }
+                        Directive::Rs => {
+                            memory[intermediate_unit.address as usize] = 0;
+                        }
+                        _ => {}
+                    }
+                }
+                Unit::Instruction(instruction) => {
+                    match instruction {
+                        Instruction::NoData(instruction) => {
+                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                        }
+                        Instruction::ImByte(instruction) => {
+                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                            memory[(intermediate_unit.address + 1) as usize] = instruction.operand;
+                        }
+                        Instruction::ImWord(instruction) => {
+                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                            let addr: u16;
+                            match &instruction.operand {
+                                Word::Label(label) => {
+                                    let index = program.label_table.get(label);
+                                    if index.is_none() {
+                                        return Err(AssembleError::LabelNotFound(label.to_string()));
+                                    }
+
+                                    let index = index.unwrap();
+                                    let labeled_unit = program.units.get(*index);
+                                    if labeled_unit.is_none() {
+                                        return Err(AssembleError::LabelNotFound(label.to_string()));
+                                    }
+                                    let labeled_unit = labeled_unit.unwrap();
+                                    addr = labeled_unit.address;
+                                }
+                                Word::U16(address) => {
+                                    addr = *address;
+                                }
+                            }
+
+                            let [lower, higher] = u16_to_pair(addr);
+                            memory[(intermediate_unit.address + 1) as usize] = lower;
+                            memory[(intermediate_unit.address + 2) as usize] = higher;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(memory)
     }
 }

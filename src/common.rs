@@ -411,3 +411,11 @@ impl TryFrom<&str> for RegisterPair {
         }
     }
 }
+
+pub fn pair_to_u16(pair: [u8; 2]) -> u16 {
+    (pair[0] as u16) + ((pair[1] as u16) << 8)
+}
+
+pub fn u16_to_pair(value: u16) -> [u8; 2] {
+    [(value & 0x00ff) as u8, ((value & 0xff00) >> 8) as u8]
+}

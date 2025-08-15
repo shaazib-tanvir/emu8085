@@ -81,33 +81,53 @@ lxi h, 2050
 mov a, m";
         let program = Program::parse(program);
         assert!(program.is_ok(), "program did not parse: {:?}", program);
+
+        let program = program.unwrap();
+        assert_eq!(program.units.len(), 3);
+        assert_eq!(program.units.get(0).cloned().unwrap(), IntermediateUnit {
+            unit: Unit::Directive(Directive::Org(0x2000)),
+            address: 0x2000,
+        });
+        assert_eq!(program.units.get(1).cloned().unwrap(), IntermediateUnit {
+            unit: Unit::Instruction(Instruction::ImWord(InstructionImWord {
+                opcode: OpCode::LxiH,
+                operand: Word::U16(0x2050),
+            })),
+            address: 0x2000,
+        });
+        assert_eq!(program.units.get(2).cloned().unwrap(), IntermediateUnit {
+            unit: Unit::Instruction(Instruction::NoData(InstructionNoData {
+                opcode: OpCode::MovAM,
+            })),
+            address: 0x2003,
+        });
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Word {
     U16(u16),
     Label(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct InstructionImByte {
     opcode: OpCode,
     operand: u8,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct InstructionImWord {
     opcode: OpCode,
     operand: Word,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct InstructionNoData {
     opcode: OpCode,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Instruction {
     ImByte(InstructionImByte),
     ImWord(InstructionImWord),
@@ -874,7 +894,7 @@ enum DirectiveError {
     Operand(#[from] OperandParseError),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Directive {
     Org(u16),
     Db(u8),
@@ -938,13 +958,13 @@ impl Directive {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Unit {
     Instruction(Instruction),
     Directive(Directive),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct IntermediateUnit {
     unit: Unit,
     address: u16,
@@ -984,28 +1004,48 @@ impl Program {
             if address.is_none() {
                 return Err(ProgramError::NoOrg);
             }
-            let address = address.unwrap();
 
             let intermediate_unit = IntermediateUnit {
                 unit: Unit::Directive(directive),
-                address: address,
+                address: address.unwrap(),
             };
 
-            Ok((intermediate_unit, address))
+            match directive {
+                Directive::Db(_) => {
+                    address = Some(address.unwrap() + 1);
+                }
+                Directive::Rs => {
+                    address = Some(address.unwrap() + 1);
+                }
+                _ => {}
+            }
+
+            Ok((intermediate_unit, address.unwrap()))
         } else {
             if address.is_none() {
                 return Err(ProgramError::NoOrg);
             }
 
-            let address = address.unwrap();
             let instruction = Instruction::parse(line_unit)?;
 
             let intermediate_unit = IntermediateUnit {
-                unit: Unit::Instruction(instruction),
-                address: address,
+                unit: Unit::Instruction(instruction.clone()),
+                address: address.unwrap(),
             };
 
-            Ok((intermediate_unit, address))
+            match instruction {
+                Instruction::ImByte(_) => {
+                    address = Some(address.unwrap() + 2);
+                }
+                Instruction::ImWord(_) => {
+                    address = Some(address.unwrap() + 3);
+                }
+                Instruction::NoData(_) => {
+                    address = Some(address.unwrap() + 1);
+                }
+            }
+
+            Ok((intermediate_unit, address.unwrap()))
         }
     }
 
@@ -1049,8 +1089,6 @@ impl Program {
                 if last_label.is_some() {
                     label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
                 }
-
-                address = Some(address.unwrap() + 1);
             } else {
                 let intermediate_unit;
                 let addr;
@@ -1063,8 +1101,6 @@ impl Program {
                 }
                 let label = label.unwrap();
                 label_table.insert(label.to_string(), intermediate_units.len() - 1);
-
-                address = Some(address.unwrap() + 1);
             }
         }
 

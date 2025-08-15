@@ -29,7 +29,7 @@ macro_rules! convertible {
 }
 
 convertible! {
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Clone, Copy)]
     pub enum OpCode {
         Nop = 0x00,
         LxiB,

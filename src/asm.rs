@@ -1,4 +1,5 @@
-use std::num::ParseIntError;
+use std::fs::read_to_string;
+use std::{num::ParseIntError, path::Path};
 use std::collections::HashMap;
 
 use crate::common::{u16_to_pair, OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
@@ -150,7 +151,7 @@ enum Instruction {
 }
 
 #[derive(Error, Debug)]
-enum OperandParseError {
+pub enum OperandParseError {
     #[error("expected `{expected}` operands, got `{got}`")]
     InsufficientOperands { expected: u8, got: u8 },
     #[error("expected no operands")]
@@ -168,7 +169,7 @@ enum OperandParseError {
 }
 
 #[derive(Error, Debug)]
-enum InstructionError {
+pub enum InstructionError {
     #[error(transparent)]
     OperandParse(#[from] OperandParseError),
     #[error(transparent)]
@@ -920,13 +921,22 @@ impl Instruction {
                     operand: value,
                 }))
             }
+            "hlt" => {
+                if operands.is_some() {
+                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
+                }
+
+                Ok(Instruction::NoData(InstructionNoData {
+                    opcode: OpCode::Hlt,
+                }))
+            }
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }
     }
 }
 
 #[derive(Error, Debug)]
-enum DirectiveError {
+pub enum DirectiveError {
     #[error("no directive `{0}` exists or is unimplimented")]
     UnknownDirective(String),
     #[error(transparent)]
@@ -1010,13 +1020,13 @@ struct IntermediateUnit {
 }
 
 #[derive(Debug)]
-struct Program {
+pub struct Program {
     units: Vec<IntermediateUnit>,
     label_table: HashMap<String, usize>,
 }
 
 #[derive(Error, Debug)]
-enum ProgramError{
+pub enum ProgramError{
     #[error(transparent)]
     Instruction(#[from] InstructionError),
     #[error(transparent)]
@@ -1028,9 +1038,11 @@ enum ProgramError{
 }
 
 #[derive(Error, Debug)]
-enum AssembleError{
+pub enum AssembleError{
     #[error(transparent)]
     Program(#[from] ProgramError),
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
     #[error("label `{0}` was not found")]
     LabelNotFound(String),
 }
@@ -1219,5 +1231,10 @@ impl Program {
         }
 
         Ok(memory)
+    }
+
+    pub fn assemble_file<P: AsRef<Path>>(path: P) -> Result<[u8; 0x10000], AssembleError> {
+        let contents = read_to_string(path)?;
+        return Self::assemble(&contents);
     }
 }

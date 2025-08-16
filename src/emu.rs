@@ -667,8 +667,8 @@ impl CPU {
             }
             OpCode::LdaxB | OpCode::LdaxD => {
                 let address = match opcode {
-                    OpCode::StaxB => self.cpu_state.get_address_bc(),
-                    OpCode::StaxD => self.cpu_state.get_address_de(),
+                    OpCode::LdaxB => self.cpu_state.get_address_bc(),
+                    OpCode::LdaxD => self.cpu_state.get_address_de(),
                     _ => panic!("unreachable"),
                 };
 

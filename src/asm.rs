@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::{num::ParseIntError, path::Path};
-use std::collections::HashMap;
 
-use crate::common::{u16_to_pair, OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
+use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -78,45 +78,63 @@ mod tests {
     #[test]
     fn program_parse() {
         let program = ".org 2000
+.start
 lxi h, 2050
 mov a, m";
         let program = Program::parse(program);
         assert!(program.is_ok(), "program did not parse: {:?}", program);
 
         let program = program.unwrap();
-        assert_eq!(program.units.len(), 3);
-        assert_eq!(program.units.get(0).cloned().unwrap(), IntermediateUnit {
-            unit: Unit::Directive(Directive::Org(0x2000)),
-            address: 0x2000,
-        });
-        assert_eq!(program.units.get(1).cloned().unwrap(), IntermediateUnit {
-            unit: Unit::Instruction(Instruction::ImWord(InstructionImWord {
-                opcode: OpCode::LxiH,
-                operand: Word::U16(0x2050),
-            })),
-            address: 0x2000,
-        });
-        assert_eq!(program.units.get(2).cloned().unwrap(), IntermediateUnit {
-            unit: Unit::Instruction(Instruction::NoData(InstructionNoData {
-                opcode: OpCode::MovAM,
-            })),
-            address: 0x2003,
-        });
+        assert_eq!(program.units.len(), 4);
+        assert_eq!(
+            program.units.get(0).cloned().unwrap(),
+            IntermediateUnit {
+                unit: Unit::Directive(Directive::Org(0x2000)),
+                address: 0x2000,
+            }
+        );
+        assert_eq!(
+            program.units.get(1).cloned().unwrap(),
+            IntermediateUnit {
+                unit: Unit::Directive(Directive::Start),
+                address: 0x2000,
+            }
+        );
+        assert_eq!(
+            program.units.get(2).cloned().unwrap(),
+            IntermediateUnit {
+                unit: Unit::Instruction(Instruction::ImWord(InstructionImWord {
+                    opcode: OpCode::LxiH,
+                    operand: Word::U16(0x2050),
+                })),
+                address: 0x2000,
+            }
+        );
+        assert_eq!(
+            program.units.get(3).cloned().unwrap(),
+            IntermediateUnit {
+                unit: Unit::Instruction(Instruction::NoData(InstructionNoData {
+                    opcode: OpCode::MovAM,
+                })),
+                address: 0x2003,
+            }
+        );
     }
 
     #[test]
     fn program_assemble() {
         let program = ".org 2000
+.start
 lxi h, 2050
 mov a, m";
-        let assembled_program = Program::assemble(program);
+        let assembled_program = AssembledProgram::assemble(program);
         assert!(assembled_program.is_ok());
         let assembled_program = assembled_program.unwrap();
 
-        assert_eq!(assembled_program[0x2000], OpCode::LxiH as u8);
-        assert_eq!(assembled_program[0x2001], 0x50);
-        assert_eq!(assembled_program[0x2002], 0x20);
-        assert_eq!(assembled_program[0x2003], OpCode::MovAM as u8);
+        assert_eq!(assembled_program.memory[0x2000], OpCode::LxiH as u8);
+        assert_eq!(assembled_program.memory[0x2001], 0x50);
+        assert_eq!(assembled_program.memory[0x2002], 0x20);
+        assert_eq!(assembled_program.memory[0x2003], OpCode::MovAM as u8);
     }
 }
 
@@ -190,18 +208,20 @@ fn check_label(label: &str) -> Option<OperandParseError> {
             ));
         }
     } else {
-        return Some(OperandParseError::Label("labels must be non-empty".to_string()));
+        return Some(OperandParseError::Label(
+            "labels must be non-empty".to_string(),
+        ));
     }
 
     for char in chars {
-        if char.is_alphanumeric() {
+        if !char.is_alphanumeric() {
             return Some(OperandParseError::Label(
                 "labels must only contain alphanumeric characters".to_string(),
             ));
         }
     }
 
-    return None
+    return None;
 }
 
 fn parse_label(label: &str) -> Result<Word, OperandParseError> {
@@ -214,11 +234,13 @@ fn parse_label(label: &str) -> Result<Word, OperandParseError> {
             ));
         }
     } else {
-        return Err(OperandParseError::Label("labels must be non-empty".to_string()));
+        return Err(OperandParseError::Label(
+            "labels must be non-empty".to_string(),
+        ));
     }
 
     for char in chars {
-        if char.is_alphanumeric() {
+        if !char.is_alphanumeric() {
             return Err(OperandParseError::Label(
                 "labels must only contain alphanumeric characters".to_string(),
             ));
@@ -948,6 +970,7 @@ enum Directive {
     Org(u16),
     Db(u8),
     Rs,
+    Start,
 }
 
 impl Directive {
@@ -967,10 +990,12 @@ impl Directive {
         match mnemonic {
             "org" => {
                 if operands.is_none() {
-                    return Err(DirectiveError::Operand(OperandParseError::InsufficientOperands {
-                        expected: 1,
-                        got: 0,
-                    }));
+                    return Err(DirectiveError::Operand(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
                 }
 
                 let operands = operands.unwrap();
@@ -979,15 +1004,17 @@ impl Directive {
                     return Err(DirectiveError::Operand(OperandParseError::ParseU16(err)));
                 } else {
                     let address = address.unwrap();
-                    Ok(Directive::Org(address)) 
+                    Ok(Directive::Org(address))
                 }
             }
             "db" => {
                 if operands.is_none() {
-                    return Err(DirectiveError::Operand(OperandParseError::InsufficientOperands {
-                        expected: 1,
-                        got: 0,
-                    }));
+                    return Err(DirectiveError::Operand(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
                 }
 
                 let operands = operands.unwrap();
@@ -1002,7 +1029,14 @@ impl Directive {
 
                 Ok(Directive::Rs)
             }
-            _ => Err(DirectiveError::UnknownDirective(mnemonic.to_string()))
+            "start" => {
+                if operands.is_some() {
+                    return Err(DirectiveError::Operand(OperandParseError::NoOp));
+                }
+
+                Ok(Directive::Start)
+            }
+            _ => Err(DirectiveError::UnknownDirective(mnemonic.to_string())),
         }
     }
 }
@@ -1023,22 +1057,73 @@ struct IntermediateUnit {
 pub struct Program {
     units: Vec<IntermediateUnit>,
     label_table: HashMap<String, usize>,
+    entrypoint: u16,
 }
 
 #[derive(Error, Debug)]
-pub enum ProgramError{
+pub enum ProgramErrorData {
     #[error(transparent)]
     Instruction(#[from] InstructionError),
     #[error(transparent)]
-    Directive(#[from]DirectiveError),
+    Directive(#[from] DirectiveError),
     #[error("no .org directive found, could not determine address")]
     NoOrg,
     #[error("unset labels can't appear twice in a row")]
     UnsetLabel,
+    #[error("no entrypoint directive found")]
+    NoEntryPoint,
 }
 
 #[derive(Error, Debug)]
-pub enum AssembleError{
+#[error("{line}: {data}")]
+pub struct ProgramErrorWithLine {
+    line: String,
+    data: ProgramErrorData,
+}
+
+#[derive(Error, Debug)]
+#[error("{data}")]
+pub struct ProgramErrorWithoutLine {
+    data: ProgramErrorData
+}
+
+#[derive(Error, Debug)]
+pub enum ProgramError {
+    #[error(transparent)]
+    WithLine(#[from] ProgramErrorWithLine),
+    #[error(transparent)]
+    WithoutLine(#[from] ProgramErrorWithoutLine),
+}
+
+impl ProgramError {
+    fn from<E>(data: E, line: Option<String>) -> ProgramError
+    where
+        E: Into<ProgramErrorData>,
+    {
+        match line {
+            Some(line) => ProgramError::WithLine(ProgramErrorWithLine {
+                line: line,
+                data: Into::into(data),
+            }),
+            None => ProgramError::WithoutLine(ProgramErrorWithoutLine {
+                data: Into::into(data),
+            }),
+        }
+    }
+
+    fn from_result<T, E>(result: Result<T, E>, line: Option<String>) -> Result<T, ProgramError>
+    where
+        E: Into<ProgramErrorData>,
+    {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => Err(ProgramError::from(error, line)),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum AssembleError {
     #[error(transparent)]
     Program(#[from] ProgramError),
     #[error(transparent)]
@@ -1047,8 +1132,17 @@ pub enum AssembleError{
     LabelNotFound(String),
 }
 
+pub struct AssembledProgram {
+    entrypoint: u16,
+    memory: [u8; 0x10000],
+}
+
 impl Program {
-    fn add_unit(line_unit: &str, mut address: Option<u16>) -> Result<(IntermediateUnit, u16), ProgramError> {
+    fn add_unit(
+        line_unit: &str,
+        mut address: Option<u16>,
+        mut entrypoint: Option<u16>,
+    ) -> Result<(IntermediateUnit, u16, Option<u16>), ProgramErrorData> {
         if line_unit.starts_with(".") {
             let line_unit = &line_unit[1..];
             let directive = Directive::parse(line_unit)?;
@@ -1061,7 +1155,7 @@ impl Program {
             }
 
             if address.is_none() {
-                return Err(ProgramError::NoOrg);
+                return Err(ProgramErrorData::NoOrg);
             }
 
             let intermediate_unit = IntermediateUnit {
@@ -1076,13 +1170,16 @@ impl Program {
                 Directive::Rs => {
                     address = Some(address.unwrap() + 1);
                 }
+                Directive::Start => {
+                    entrypoint = Some(address.unwrap());
+                }
                 _ => {}
             }
 
-            Ok((intermediate_unit, address.unwrap()))
+            Ok((intermediate_unit, address.unwrap(), entrypoint))
         } else {
             if address.is_none() {
-                return Err(ProgramError::NoOrg);
+                return Err(ProgramErrorData::NoOrg);
             }
 
             let instruction = Instruction::parse(line_unit)?;
@@ -1104,13 +1201,14 @@ impl Program {
                 }
             }
 
-            Ok((intermediate_unit, address.unwrap()))
+            Ok((intermediate_unit, address.unwrap(), entrypoint))
         }
     }
 
     fn parse(program: &str) -> Result<Program, ProgramError> {
         let lines = program.lines();
         let mut address = None;
+        let mut entrypoint = None;
         let mut last_label = None;
 
         let mut intermediate_units = vec![];
@@ -1122,7 +1220,10 @@ impl Program {
             match line_split {
                 Some(line_split) => {
                     if let Some(error) = check_label(line_split.0) {
-                        return Err(ProgramError::Instruction(InstructionError::OperandParse(error)));
+                        return Err(ProgramError::from(
+                            ProgramErrorData::Instruction(InstructionError::OperandParse(error)),
+                            Some(line.to_string()),
+                        ));
                     }
 
                     (label, line_unit) = (Some(line_split.0), line_split.1);
@@ -1138,103 +1239,128 @@ impl Program {
                 continue;
             } else if label.is_some() && line_unit == "" {
                 if last_label.is_some() {
-                    return Err(ProgramError::UnsetLabel);
+                    return Err(ProgramError::from(
+                        ProgramErrorData::UnsetLabel,
+                        Some(line.to_string()),
+                    ));
                 }
 
                 last_label = label;
             } else if label.is_none() && line_unit != "" {
                 let intermediate_unit;
                 let addr;
-                (intermediate_unit, addr) = Self::add_unit(line_unit, address)?;
+                (intermediate_unit, addr, entrypoint) =
+                    ProgramError::from_result(Self::add_unit(line_unit, address, entrypoint), Some(line.to_string()))?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
                 if last_label.is_some() {
-                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    label_table.insert(
+                        last_label.unwrap().to_string(),
+                        intermediate_units.len() - 1,
+                    );
                 }
             } else {
                 let intermediate_unit;
                 let addr;
-                (intermediate_unit, addr) = Self::add_unit(line_unit, address)?;
+                (intermediate_unit, addr, entrypoint) =
+                    ProgramError::from_result(Self::add_unit(line_unit, address, entrypoint), Some(line.to_string()))?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
                 if last_label.is_some() {
-                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    label_table.insert(
+                        last_label.unwrap().to_string(),
+                        intermediate_units.len() - 1,
+                    );
                 }
                 let label = label.unwrap();
                 label_table.insert(label.to_string(), intermediate_units.len() - 1);
             }
         }
 
+        if entrypoint.is_none() {
+            return Err(ProgramError::from(ProgramErrorData::NoEntryPoint, None));
+        }
+
         Ok(Self {
             units: intermediate_units,
             label_table: label_table,
+            entrypoint: entrypoint.unwrap(),
         })
     }
+}
 
-    pub fn assemble(program: &str) -> Result<[u8; 0x10000], AssembleError> {
+impl AssembledProgram {
+    pub fn assemble(program: &str) -> Result<AssembledProgram, AssembleError> {
         let program = Program::parse(program)?;
         let mut memory: [u8; 0x10000] = [0; 0x10000];
         for intermediate_unit in &program.units {
             match &intermediate_unit.unit {
-                Unit::Directive(directive) => {
-                    match directive {
-                        Directive::Db(value) => {
-                            memory[intermediate_unit.address as usize] = *value;
-                        }
-                        Directive::Rs => {
-                            memory[intermediate_unit.address as usize] = 0;
-                        }
-                        _ => {}
+                Unit::Directive(directive) => match directive {
+                    Directive::Db(value) => {
+                        memory[intermediate_unit.address as usize] = *value;
                     }
-                }
-                Unit::Instruction(instruction) => {
-                    match instruction {
-                        Instruction::NoData(instruction) => {
-                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                        }
-                        Instruction::ImByte(instruction) => {
-                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                            memory[(intermediate_unit.address + 1) as usize] = instruction.operand;
-                        }
-                        Instruction::ImWord(instruction) => {
-                            memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                            let addr: u16;
-                            match &instruction.operand {
-                                Word::Label(label) => {
-                                    let index = program.label_table.get(label);
-                                    if index.is_none() {
-                                        return Err(AssembleError::LabelNotFound(label.to_string()));
-                                    }
+                    Directive::Rs => {
+                        memory[intermediate_unit.address as usize] = 0;
+                    }
+                    _ => {}
+                },
+                Unit::Instruction(instruction) => match instruction {
+                    Instruction::NoData(instruction) => {
+                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                    }
+                    Instruction::ImByte(instruction) => {
+                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                        memory[(intermediate_unit.address + 1) as usize] = instruction.operand;
+                    }
+                    Instruction::ImWord(instruction) => {
+                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
+                        let addr: u16;
+                        match &instruction.operand {
+                            Word::Label(label) => {
+                                let index = program.label_table.get(label);
+                                if index.is_none() {
+                                    return Err(AssembleError::LabelNotFound(label.to_string()));
+                                }
 
-                                    let index = index.unwrap();
-                                    let labeled_unit = program.units.get(*index);
-                                    if labeled_unit.is_none() {
-                                        return Err(AssembleError::LabelNotFound(label.to_string()));
-                                    }
-                                    let labeled_unit = labeled_unit.unwrap();
-                                    addr = labeled_unit.address;
+                                let index = index.unwrap();
+                                let labeled_unit = program.units.get(*index);
+                                if labeled_unit.is_none() {
+                                    return Err(AssembleError::LabelNotFound(label.to_string()));
                                 }
-                                Word::U16(address) => {
-                                    addr = *address;
-                                }
+                                let labeled_unit = labeled_unit.unwrap();
+                                addr = labeled_unit.address;
                             }
-
-                            let [lower, higher] = u16_to_pair(addr);
-                            memory[(intermediate_unit.address + 1) as usize] = lower;
-                            memory[(intermediate_unit.address + 2) as usize] = higher;
+                            Word::U16(address) => {
+                                addr = *address;
+                            }
                         }
+
+                        let [lower, higher] = u16_to_pair(addr);
+                        memory[(intermediate_unit.address + 1) as usize] = lower;
+                        memory[(intermediate_unit.address + 2) as usize] = higher;
                     }
-                }
+                },
             }
         }
 
-        Ok(memory)
+        Ok(Self {
+            memory,
+            entrypoint: program.entrypoint,
+        })
     }
 
-    pub fn assemble_file<P: AsRef<Path>>(path: P) -> Result<[u8; 0x10000], AssembleError> {
+    pub fn assemble_file<P: AsRef<Path>>(path: P) -> Result<AssembledProgram, AssembleError> {
         let contents = read_to_string(path)?;
         return Self::assemble(&contents);
+    }
+
+    pub fn get_memory(&self) -> [u8; 0x10000] {
+        self.memory
+    }
+
+    pub fn get_entrypoint(&self) -> u16 {
+        self.entrypoint
     }
 }

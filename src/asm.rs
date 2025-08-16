@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::io::{Write, Read};
 use std::fs;
 use std::fs::read_to_string;
+use std::io::{Read, Write};
 use std::{num::ParseIntError, path::Path};
 
-use crate::common::{pair_to_u16, u16_to_pair, OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
+use crate::common::{
+    OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, pair_to_u16, u16_to_pair,
+};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -363,7 +365,7 @@ impl Instruction {
                 let opcode = 0b01000000 + ((destination as u8) << 3) + (source as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "mvi" => {
                 if operands.is_none() {
@@ -382,7 +384,7 @@ impl Instruction {
                 let opcode = OpCode::try_from(opcode).unwrap();
 
                 Ok(Instruction::ImByte(InstructionImByte {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -402,7 +404,7 @@ impl Instruction {
                 let opcode = OpCode::try_from(opcode).unwrap();
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -424,7 +426,7 @@ impl Instruction {
                     _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "ldax" => {
                 if operands.is_none() {
@@ -444,7 +446,7 @@ impl Instruction {
                     _ => Err(InstructionError::Unreachable),
                 }?;
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "sta" => {
                 if operands.is_none() {
@@ -461,7 +463,7 @@ impl Instruction {
                 let opcode = OpCode::Sta;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -480,7 +482,7 @@ impl Instruction {
                 let opcode = OpCode::Lda;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -499,7 +501,7 @@ impl Instruction {
                 let opcode = OpCode::Shld;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -518,7 +520,7 @@ impl Instruction {
                 let opcode = OpCode::Lhld;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -546,7 +548,7 @@ impl Instruction {
                 let opcode = OpCode::Jmp;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -565,7 +567,7 @@ impl Instruction {
                 let opcode = OpCode::Jc;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -584,7 +586,7 @@ impl Instruction {
                 let opcode = OpCode::Jnc;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -603,7 +605,7 @@ impl Instruction {
                 let opcode = OpCode::Jz;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -622,7 +624,7 @@ impl Instruction {
                 let opcode = OpCode::Jnz;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -641,7 +643,7 @@ impl Instruction {
                 let opcode = OpCode::Jp;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -660,7 +662,7 @@ impl Instruction {
                 let opcode = OpCode::Jm;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -679,7 +681,7 @@ impl Instruction {
                 let opcode = OpCode::Jpe;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -698,7 +700,7 @@ impl Instruction {
                 let opcode = OpCode::Jpo;
 
                 Ok(Instruction::ImWord(InstructionImWord {
-                    opcode: opcode,
+                    opcode,
                     operand: value,
                 }))
             }
@@ -727,7 +729,7 @@ impl Instruction {
                 let opcode = 0b00000100 + ((rm as u8) << 3);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "dcr" => {
                 if operands.is_none() {
@@ -745,7 +747,7 @@ impl Instruction {
                 let opcode = 0b00000101 + ((rm as u8) << 3);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "inx" => {
                 if operands.is_none() {
@@ -763,7 +765,7 @@ impl Instruction {
                 let opcode = 0b00000011 + ((rp as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "dcx" => {
                 if operands.is_none() {
@@ -781,7 +783,7 @@ impl Instruction {
                 let opcode = 0b00001011 + ((rp as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "add" => {
                 if operands.is_none() {
@@ -799,7 +801,7 @@ impl Instruction {
                 let opcode = 0b10000000 + (rm as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "adc" => {
                 if operands.is_none() {
@@ -817,7 +819,7 @@ impl Instruction {
                 let opcode = 0b10001000 + (rm as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "adi" => {
                 if operands.is_none() {
@@ -871,7 +873,7 @@ impl Instruction {
                 let opcode = 0b00001001 + ((rp as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "sub" => {
                 if operands.is_none() {
@@ -889,7 +891,7 @@ impl Instruction {
                 let opcode = 0b10010000 + (rm as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "sbb" => {
                 if operands.is_none() {
@@ -907,7 +909,7 @@ impl Instruction {
                 let opcode = 0b10011000 + (rm as u8);
                 let opcode = OpCode::try_from(opcode).unwrap();
 
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
             "sui" => {
                 if operands.is_none() {
@@ -1086,7 +1088,7 @@ pub struct ProgramErrorWithLine {
 #[derive(Error, Debug)]
 #[error("{data}")]
 pub struct ProgramErrorWithoutLine {
-    data: ProgramErrorData
+    data: ProgramErrorData,
 }
 
 #[derive(Error, Debug)]
@@ -1104,7 +1106,7 @@ impl ProgramError {
     {
         match line {
             Some(line) => ProgramError::WithLine(ProgramErrorWithLine {
-                line: line,
+                line,
                 data: Into::into(data),
             }),
             None => ProgramError::WithoutLine(ProgramErrorWithoutLine {
@@ -1247,30 +1249,28 @@ impl Program {
             } else if label.is_none() && line_unit.is_empty() {
                 let intermediate_unit;
                 let addr;
-                (intermediate_unit, addr, entrypoint) =
-                    ProgramError::from_result(Self::add_unit(line_unit, address, entrypoint), Some(line.to_string()))?;
+                (intermediate_unit, addr, entrypoint) = ProgramError::from_result(
+                    Self::add_unit(line_unit, address, entrypoint),
+                    Some(line.to_string()),
+                )?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
                 if let Some(last_label) = last_label {
-                    label_table.insert(
-                        last_label.to_string(),
-                        intermediate_units.len() - 1,
-                    );
+                    label_table.insert(last_label.to_string(), intermediate_units.len() - 1);
                 }
             } else {
                 let intermediate_unit;
                 let addr;
-                (intermediate_unit, addr, entrypoint) =
-                    ProgramError::from_result(Self::add_unit(line_unit, address, entrypoint), Some(line.to_string()))?;
+                (intermediate_unit, addr, entrypoint) = ProgramError::from_result(
+                    Self::add_unit(line_unit, address, entrypoint),
+                    Some(line.to_string()),
+                )?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
                 if let Some(last_label) = last_label {
-                    label_table.insert(
-                        last_label.to_string(),
-                        intermediate_units.len() - 1,
-                    );
+                    label_table.insert(last_label.to_string(), intermediate_units.len() - 1);
                 }
 
                 let label = label.unwrap();
@@ -1284,7 +1284,7 @@ impl Program {
 
         Ok(Self {
             units: intermediate_units,
-            label_table: label_table,
+            label_table,
             entrypoint: entrypoint.unwrap(),
         })
     }
@@ -1330,9 +1330,7 @@ impl AssembledProgram {
                                 let labeled_unit = labeled_unit.unwrap();
                                 labeled_unit.address
                             }
-                            Word::U16(address) => {
-                                *address
-                            }
+                            Word::U16(address) => *address,
                         };
 
                         let [lower, higher] = u16_to_pair(addr);
@@ -1380,7 +1378,7 @@ impl AssembledProgram {
 
         Ok(AssembledProgram {
             entrypoint: pair_to_u16(entrypoint),
-            memory: memory,
+            memory,
         })
     }
 }

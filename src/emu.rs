@@ -42,7 +42,7 @@ fn get_parity(value: u8) -> bool {
         result ^= (value & (1 << i)) >> i;
     }
 
-    return result == 0;
+    result == 0
 }
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ struct CPUState {
 
 impl CPUState {
     fn new() -> Self {
-        return Self {
+        Self {
             memory: [0; 0x10000],
             registers: RegisterState {
                 a: 0,
@@ -81,7 +81,7 @@ impl CPUState {
                 stack_pointer: 0,
                 program_counter: 0,
             },
-        };
+        }
     }
 
     fn get_flags(&self) -> Flags {
@@ -283,13 +283,19 @@ pub enum StepError {
     Halt,
 }
 
+impl Default for CPU {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CPU {
     pub fn new() -> Self {
-        return Self {
+        Self {
             cpu_state: CPUState::new(),
             commands: VecDeque::new(),
             instruction_count: 0,
-        };
+        }
     }
 
     fn push_command(&mut self, operation: Operation) {
@@ -350,7 +356,7 @@ impl CPU {
     }
 
     fn push_flag_op(&mut self, value: u8, carry: bool, auxiliary_carry: bool) {
-        let mut new_flags = self.cpu_state.get_flags().clone();
+        let mut new_flags = self.cpu_state.get_flags();
         new_flags.set(Flags::ZERO, value == 0);
         new_flags.set(Flags::SIGN, (0b10000000 & value) != 0);
         new_flags.set(Flags::PARITY, get_parity(value));
@@ -359,7 +365,7 @@ impl CPU {
 
         let op = Operation::Flags(FlagsOperation {
             old_flags: self.cpu_state.get_flags(),
-            new_flags: new_flags,
+            new_flags,
         });
 
         self.cpu_state.execute_op(op);
@@ -367,7 +373,7 @@ impl CPU {
     }
 
     fn push_sub_mem_op(&mut self, difference: u8, carry: Option<bool>) {
-        let mut new_flags = self.cpu_state.get_flags().clone();
+        let mut new_flags = self.cpu_state.get_flags();
 
         if let Some(carry) = carry {
             new_flags.set(Flags::CARRY, carry);
@@ -387,7 +393,7 @@ impl CPU {
 
         let flags_op = Operation::Flags(FlagsOperation {
             old_flags: self.cpu_state.get_flags(),
-            new_flags: new_flags,
+            new_flags,
         });
 
         self.cpu_state.execute_op(flags_op);
@@ -395,7 +401,7 @@ impl CPU {
     }
 
     fn push_sub_op(&mut self, difference: u8, carry: Option<bool>, destination: Register) {
-        let mut new_flags = self.cpu_state.get_flags().clone();
+        let mut new_flags = self.cpu_state.get_flags();
 
         if let Some(carry) = carry {
             new_flags.set(Flags::CARRY, carry);
@@ -415,7 +421,7 @@ impl CPU {
 
         let flags_op = Operation::Flags(FlagsOperation {
             old_flags: self.cpu_state.get_flags(),
-            new_flags: new_flags,
+            new_flags,
         });
 
         self.cpu_state.execute_op(flags_op);
@@ -423,7 +429,7 @@ impl CPU {
     }
 
     fn push_add_mem_op(&mut self, sum: u8, carry: Option<bool>) {
-        let mut new_flags = self.cpu_state.get_flags().clone();
+        let mut new_flags = self.cpu_state.get_flags();
 
         if let Some(carry) = carry {
             new_flags.set(Flags::CARRY, carry);
@@ -443,7 +449,7 @@ impl CPU {
 
         let flags_op = Operation::Flags(FlagsOperation {
             old_flags: self.cpu_state.get_flags(),
-            new_flags: new_flags,
+            new_flags,
         });
 
         self.cpu_state.execute_op(flags_op);
@@ -451,7 +457,7 @@ impl CPU {
     }
 
     fn push_add_op(&mut self, sum: u8, carry: Option<bool>, destination: Register) {
-        let mut new_flags = self.cpu_state.get_flags().clone();
+        let mut new_flags = self.cpu_state.get_flags();
 
         if let Some(carry) = carry {
             new_flags.set(Flags::CARRY, carry);
@@ -471,7 +477,7 @@ impl CPU {
 
         let flags_op = Operation::Flags(FlagsOperation {
             old_flags: self.cpu_state.get_flags(),
-            new_flags: new_flags,
+            new_flags,
         });
 
         self.cpu_state.execute_op(flags_op);
@@ -657,7 +663,7 @@ impl CPU {
                 };
 
                 let op = Operation::Memory(MemoryOperation {
-                    address: address,
+                    address,
                     old_value: self.cpu_state.get_memory_at(address),
                     new_value: value,
                 });
@@ -705,7 +711,7 @@ impl CPU {
                 let address = self.read_double_bytes();
 
                 let op_lower = Operation::Memory(MemoryOperation {
-                    address: address,
+                    address,
                     old_value: self.cpu_state.get_memory_at(address),
                     new_value: self.cpu_state.get_register(Register::L),
                 });
@@ -840,14 +846,14 @@ impl CPU {
                     register: Register::A,
                 });
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(
                     Flags::CARRY,
                     self.cpu_state.get_register(Register::A) & 0b10000000 != 0,
                 );
                 let flags_op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(shift_op);
@@ -862,14 +868,14 @@ impl CPU {
                     register: Register::A,
                 });
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(
                     Flags::CARRY,
                     self.cpu_state.get_register(Register::A) & 0b00000001 != 0,
                 );
                 let flags_op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(shift_op);
@@ -880,19 +886,18 @@ impl CPU {
             OpCode::Rlc => {
                 let shift_op = Operation::Register(RegisterOperation {
                     old_value: self.cpu_state.get_register(Register::A),
-                    new_value: self.cpu_state.get_register(Register::A)
-                        << 1 + (self.cpu_state.get_register(Register::A) & 0b10000000 != 0) as u8,
+                    new_value: self.cpu_state.get_register(Register::A) << (1 + (self.cpu_state.get_register(Register::A) & 0b10000000 != 0) as u8),
                     register: Register::A,
                 });
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(
                     Flags::CARRY,
                     self.cpu_state.get_register(Register::A) & 0b10000000 != 0,
                 );
                 let flags_op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(shift_op);
@@ -903,21 +908,20 @@ impl CPU {
             OpCode::Rrc => {
                 let shift_op = Operation::Register(RegisterOperation {
                     old_value: self.cpu_state.get_register(Register::A),
-                    new_value: self.cpu_state.get_register(Register::A)
-                        >> 1 + (((self.cpu_state.get_register(Register::A) & 0b00000001 != 0)
+                    new_value: self.cpu_state.get_register(Register::A) >> (1 + (((self.cpu_state.get_register(Register::A) & 0b00000001 != 0)
                             as u8)
-                            << 7),
+                            << 7)),
                     register: Register::A,
                 });
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(
                     Flags::CARRY,
                     self.cpu_state.get_register(Register::A) & 0b10000000 != 0,
                 );
                 let flags_op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(shift_op);
@@ -979,7 +983,7 @@ impl CPU {
                         .cpu_state
                         .get_register_pair(source_rp)
                         .overflowing_add(self.cpu_state.get_register_pair(RegisterPair::HL));
-                    let mut new_flags = self.cpu_state.get_flags().clone();
+                    let mut new_flags = self.cpu_state.get_flags();
                     new_flags.set(Flags::CARRY, carry);
 
                     let add_op = Operation::RegisterPair(RegisterPairOperation {
@@ -992,7 +996,7 @@ impl CPU {
 
                     let flags_op = Operation::Flags(FlagsOperation {
                         old_flags: self.cpu_state.get_flags(),
-                        new_flags: new_flags,
+                        new_flags,
                     });
                     self.cpu_state.execute_op(flags_op);
                     self.push_command(flags_op);
@@ -1085,7 +1089,7 @@ impl CPU {
                 let source = instruction & 0b00000111;
                 let source_register = Register::try_from(source);
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 if let Ok(source_register) = source_register {
                     match self
                         .cpu_state
@@ -1116,7 +1120,7 @@ impl CPU {
 
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(op);
@@ -1125,7 +1129,7 @@ impl CPU {
             OpCode::Cpi => {
                 let value = self.read_byte();
 
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 match self.cpu_state.get_register(Register::A).cmp(&value) {
                     Ordering::Equal => new_flags.set(Flags::ZERO, true),
                     Ordering::Greater => {
@@ -1137,7 +1141,7 @@ impl CPU {
 
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(op);
@@ -1392,7 +1396,7 @@ impl CPU {
                 new_flags.set(Flags::CARRY, true);
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(op);
@@ -1403,7 +1407,7 @@ impl CPU {
                 new_flags.set(Flags::CARRY, !new_flags.contains(Flags::CARRY));
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 });
 
                 self.cpu_state.execute_op(op);

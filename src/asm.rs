@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::io::{Write, Read};
+use std::fs;
 use std::fs::read_to_string;
 use std::{num::ParseIntError, path::Path};
 
-use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair};
+use crate::common::{pair_to_u16, u16_to_pair, OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -1362,5 +1364,27 @@ impl AssembledProgram {
 
     pub fn get_entrypoint(&self) -> u16 {
         self.entrypoint
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        let mut file = fs::File::create(&path)?;
+        file.write(&u16_to_pair(self.get_entrypoint()))?;
+        file.write(&self.memory)?;
+
+        Ok(())
+    }
+
+    pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let mut memory: [u8; 0x10000] = [0; 0x10000];
+        let mut entrypoint: [u8; 2] = [0; 2];
+
+        let mut file = fs::File::open(&path)?;
+        file.read(&mut entrypoint)?;
+        file.read(&mut memory)?;
+
+        Ok(AssembledProgram {
+            entrypoint: pair_to_u16(entrypoint),
+            memory: memory,
+        })
     }
 }

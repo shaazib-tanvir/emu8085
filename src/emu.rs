@@ -1388,7 +1388,7 @@ impl CPU {
                 self.push_command(op);
             }
             OpCode::Stc => {
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(Flags::CARRY, true);
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),
@@ -1399,7 +1399,7 @@ impl CPU {
                 self.push_command(op);
             }
             OpCode::Cmc => {
-                let mut new_flags = self.cpu_state.get_flags().clone();
+                let mut new_flags = self.cpu_state.get_flags();
                 new_flags.set(Flags::CARRY, !new_flags.contains(Flags::CARRY));
                 let op = Operation::Flags(FlagsOperation {
                     old_flags: self.cpu_state.get_flags(),

@@ -223,7 +223,7 @@ fn check_label(label: &str) -> Option<OperandParseError> {
         }
     }
 
-    return None;
+    None
 }
 
 fn parse_label(label: &str) -> Result<Word, OperandParseError> {
@@ -249,7 +249,7 @@ fn parse_label(label: &str) -> Result<Word, OperandParseError> {
         }
     }
 
-    return Ok(Word::Label(label.to_string()));
+    Ok(Word::Label(label.to_string()))
 }
 
 fn parse_rm_rm(operands: &str) -> Result<(RegMem, RegMem), OperandParseError> {
@@ -1003,7 +1003,7 @@ impl Directive {
                 let operands = operands.unwrap();
                 let address = u16::from_str_radix(operands, 16);
                 if let Err(err) = address {
-                    return Err(DirectiveError::Operand(OperandParseError::ParseU16(err)));
+                    Err(DirectiveError::Operand(OperandParseError::ParseU16(err)))
                 } else {
                     let address = address.unwrap();
                     Ok(Directive::Org(address))
@@ -1145,15 +1145,11 @@ impl Program {
         mut address: Option<u16>,
         mut entrypoint: Option<u16>,
     ) -> Result<(IntermediateUnit, u16, Option<u16>), ProgramErrorData> {
-        if line_unit.starts_with(".") {
-            let line_unit = &line_unit[1..];
+        if let Some(line_unit) = line_unit.strip_prefix(".") {
             let directive = Directive::parse(line_unit)?;
 
-            match directive {
-                Directive::Org(addr) => {
-                    address = Some(addr);
-                }
-                _ => {}
+            if let Directive::Org(addr) = directive {
+                address = Some(addr);
             }
 
             if address.is_none() {
@@ -1237,9 +1233,9 @@ impl Program {
 
             let line_unit = line_unit.trim();
 
-            if label == None && line_unit == "" {
+            if label.is_none() && line_unit.is_empty() {
                 continue;
-            } else if label.is_some() && line_unit == "" {
+            } else if label.is_some() && line_unit.is_empty() {
                 if last_label.is_some() {
                     return Err(ProgramError::from(
                         ProgramErrorData::UnsetLabel,
@@ -1248,7 +1244,7 @@ impl Program {
                 }
 
                 last_label = label;
-            } else if label.is_none() && line_unit != "" {
+            } else if label.is_none() && line_unit.is_empty() {
                 let intermediate_unit;
                 let addr;
                 (intermediate_unit, addr, entrypoint) =
@@ -1256,9 +1252,9 @@ impl Program {
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
-                if last_label.is_some() {
+                if let Some(last_label) = last_label {
                     label_table.insert(
-                        last_label.unwrap().to_string(),
+                        last_label.to_string(),
                         intermediate_units.len() - 1,
                     );
                 }
@@ -1270,12 +1266,13 @@ impl Program {
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
-                if last_label.is_some() {
+                if let Some(last_label) = last_label {
                     label_table.insert(
-                        last_label.unwrap().to_string(),
+                        last_label.to_string(),
                         intermediate_units.len() - 1,
                     );
                 }
+
                 let label = label.unwrap();
                 label_table.insert(label.to_string(), intermediate_units.len() - 1);
             }
@@ -1318,8 +1315,7 @@ impl AssembledProgram {
                     }
                     Instruction::ImWord(instruction) => {
                         memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                        let addr: u16;
-                        match &instruction.operand {
+                        let addr: u16 = match &instruction.operand {
                             Word::Label(label) => {
                                 let index = program.label_table.get(label);
                                 if index.is_none() {
@@ -1332,12 +1328,12 @@ impl AssembledProgram {
                                     return Err(AssembleError::LabelNotFound(label.to_string()));
                                 }
                                 let labeled_unit = labeled_unit.unwrap();
-                                addr = labeled_unit.address;
+                                labeled_unit.address
                             }
                             Word::U16(address) => {
-                                addr = *address;
+                                *address
                             }
-                        }
+                        };
 
                         let [lower, higher] = u16_to_pair(addr);
                         memory[(intermediate_unit.address + 1) as usize] = lower;
@@ -1355,7 +1351,7 @@ impl AssembledProgram {
 
     pub fn assemble_file<P: AsRef<Path>>(path: P) -> Result<AssembledProgram, AssembleError> {
         let contents = read_to_string(path)?;
-        return Self::assemble(&contents);
+        Self::assemble(&contents)
     }
 
     pub fn get_memory(&self) -> [u8; 0x10000] {
@@ -1368,8 +1364,8 @@ impl AssembledProgram {
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
         let mut file = fs::File::create(&path)?;
-        file.write(&u16_to_pair(self.get_entrypoint()))?;
-        file.write(&self.memory)?;
+        file.write_all(&u16_to_pair(self.get_entrypoint()))?;
+        file.write_all(&self.memory)?;
 
         Ok(())
     }
@@ -1379,8 +1375,8 @@ impl AssembledProgram {
         let mut entrypoint: [u8; 2] = [0; 2];
 
         let mut file = fs::File::open(&path)?;
-        file.read(&mut entrypoint)?;
-        file.read(&mut memory)?;
+        file.read_exact(&mut entrypoint)?;
+        file.read_exact(&mut memory)?;
 
         Ok(AssembledProgram {
             entrypoint: pair_to_u16(entrypoint),

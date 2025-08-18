@@ -93,6 +93,10 @@ mov a, m";
         assert_eq!(
             program.units.get(0).cloned().unwrap(),
             IntermediateUnit {
+                line: Line {
+                    line: ".org 2000".to_string(),
+                    line_number: 0,
+                },
                 unit: Unit::Directive(Directive::Org(0x2000)),
                 address: 0x2000,
             }
@@ -100,6 +104,10 @@ mov a, m";
         assert_eq!(
             program.units.get(1).cloned().unwrap(),
             IntermediateUnit {
+                line: Line {
+                    line: ".start".to_string(),
+                    line_number: 1,
+                },
                 unit: Unit::Directive(Directive::Start),
                 address: 0x2000,
             }
@@ -107,6 +115,10 @@ mov a, m";
         assert_eq!(
             program.units.get(2).cloned().unwrap(),
             IntermediateUnit {
+                line: Line {
+                    line: "lxi h, 2050".to_string(),
+                    line_number: 2,
+                },
                 unit: Unit::Instruction(Instruction::ImWord(InstructionImWord {
                     opcode: OpCode::LxiH,
                     operand: Word::U16(0x2050),
@@ -117,6 +129,10 @@ mov a, m";
         assert_eq!(
             program.units.get(3).cloned().unwrap(),
             IntermediateUnit {
+                line: Line {
+                    line: "mov a, m".to_string(),
+                    line_number: 3,
+                },
                 unit: Unit::Instruction(Instruction::NoData(InstructionNoData {
                     opcode: OpCode::MovAM,
                 })),
@@ -1053,6 +1069,7 @@ enum Unit {
 
 #[derive(Debug, PartialEq, Clone)]
 struct IntermediateUnit {
+    line: Line,
     unit: Unit,
     address: u16,
 }
@@ -1078,10 +1095,36 @@ pub enum ProgramErrorData {
     NoEntryPoint,
 }
 
-#[derive(Error, Debug)]
-#[error("{line}: {data}")]
-pub struct ProgramErrorWithLine {
+#[derive(Clone, PartialEq)]
+pub struct Line {
     line: String,
+    line_number: usize,
+}
+
+impl Line {
+    fn new(line: String, line_number: usize) -> Self {
+        Line { line, line_number }
+    }
+}
+
+impl std::fmt::Debug for Line {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "{} | {}", self.line_number, self.line)?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Line {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "{} | {}", self.line_number, self.line)?;
+        Ok(())
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("{line:?}: {data}")]
+pub struct ProgramErrorWithLine {
+    line: Line,
     data: ProgramErrorData,
 }
 
@@ -1100,7 +1143,7 @@ pub enum ProgramError {
 }
 
 impl ProgramError {
-    fn from<E>(data: E, line: Option<String>) -> ProgramError
+    fn from<E>(data: E, line: Option<Line>) -> ProgramError
     where
         E: Into<ProgramErrorData>,
     {
@@ -1115,7 +1158,7 @@ impl ProgramError {
         }
     }
 
-    fn from_result<T, E>(result: Result<T, E>, line: Option<String>) -> Result<T, ProgramError>
+    fn from_result<T, E>(result: Result<T, E>, line: Option<Line>) -> Result<T, ProgramError>
     where
         E: Into<ProgramErrorData>,
     {
@@ -1132,8 +1175,8 @@ pub enum AssembleError {
     Program(#[from] ProgramError),
     #[error(transparent)]
     IO(#[from] std::io::Error),
-    #[error("label `{0}` was not found")]
-    LabelNotFound(String),
+    #[error("{line}: label `{label}` was not found")]
+    LabelNotFound { line: Line, label: String },
 }
 
 pub struct AssembledProgram {
@@ -1144,6 +1187,7 @@ pub struct AssembledProgram {
 impl Program {
     fn add_unit(
         line_unit: &str,
+        line: Line,
         mut address: Option<u16>,
         mut entrypoint: Option<u16>,
     ) -> Result<(IntermediateUnit, u16, Option<u16>), ProgramErrorData> {
@@ -1159,6 +1203,7 @@ impl Program {
             }
 
             let intermediate_unit = IntermediateUnit {
+                line,
                 unit: Unit::Directive(directive),
                 address: address.unwrap(),
             };
@@ -1185,6 +1230,7 @@ impl Program {
             let instruction = Instruction::parse(line_unit)?;
 
             let intermediate_unit = IntermediateUnit {
+                line,
                 unit: Unit::Instruction(instruction.clone()),
                 address: address.unwrap(),
             };
@@ -1214,7 +1260,7 @@ impl Program {
         let mut intermediate_units = vec![];
         let mut label_table = HashMap::new();
 
-        for line in lines {
+        for (line_number, line) in lines.enumerate() {
             let line_split = line.split_once(":");
             let (label, line_unit);
             match line_split {
@@ -1222,7 +1268,7 @@ impl Program {
                     if let Some(error) = check_label(line_split.0) {
                         return Err(ProgramError::from(
                             ProgramErrorData::Instruction(InstructionError::OperandParse(error)),
-                            Some(line.to_string()),
+                            Some(Line::new(line.to_string(), line_number)),
                         ));
                     }
 
@@ -1241,17 +1287,22 @@ impl Program {
                 if last_label.is_some() {
                     return Err(ProgramError::from(
                         ProgramErrorData::UnsetLabel,
-                        Some(line.to_string()),
+                        Some(Line::new(line.to_string(), line_number)),
                     ));
                 }
 
                 last_label = label;
-            } else if label.is_none() && line_unit.is_empty() {
+            } else if label.is_none() && !line_unit.is_empty() {
                 let intermediate_unit;
                 let addr;
                 (intermediate_unit, addr, entrypoint) = ProgramError::from_result(
-                    Self::add_unit(line_unit, address, entrypoint),
-                    Some(line.to_string()),
+                    Self::add_unit(
+                        line_unit,
+                        Line::new(line.to_string(), line_number),
+                        address,
+                        entrypoint,
+                    ),
+                    Some(Line::new(line.to_string(), line_number)),
                 )?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
@@ -1263,8 +1314,13 @@ impl Program {
                 let intermediate_unit;
                 let addr;
                 (intermediate_unit, addr, entrypoint) = ProgramError::from_result(
-                    Self::add_unit(line_unit, address, entrypoint),
-                    Some(line.to_string()),
+                    Self::add_unit(
+                        line_unit,
+                        Line::new(line.to_string(), line_number),
+                        address,
+                        entrypoint,
+                    ),
+                    Some(Line::new(line.to_string(), line_number)),
                 )?;
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
@@ -1319,13 +1375,19 @@ impl AssembledProgram {
                             Word::Label(label) => {
                                 let index = program.label_table.get(label);
                                 if index.is_none() {
-                                    return Err(AssembleError::LabelNotFound(label.to_string()));
+                                    return Err(AssembleError::LabelNotFound {
+                                        line: intermediate_unit.line.clone(),
+                                        label: label.to_string(),
+                                    });
                                 }
 
                                 let index = index.unwrap();
                                 let labeled_unit = program.units.get(*index);
                                 if labeled_unit.is_none() {
-                                    return Err(AssembleError::LabelNotFound(label.to_string()));
+                                    return Err(AssembleError::LabelNotFound {
+                                        line: intermediate_unit.line.clone(),
+                                        label: label.to_string(),
+                                    });
                                 }
                                 let labeled_unit = labeled_unit.unwrap();
                                 labeled_unit.address

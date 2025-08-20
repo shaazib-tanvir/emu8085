@@ -488,6 +488,14 @@ impl CPU {
         self.cpu_state.get_memory_at(address)
     }
 
+    pub fn get_register(&self, register: Register) -> u8 {
+        self.cpu_state.get_register(register)
+    }
+
+    pub fn get_rp(&self, rp: RegisterPair) -> u16 {
+        self.cpu_state.get_register_pair(rp)
+    }
+
     pub fn get_flags(&self) -> Flags {
         self.cpu_state.registers.flags
     }

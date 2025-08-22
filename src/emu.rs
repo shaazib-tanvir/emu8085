@@ -36,6 +36,12 @@ bitflags! {
     }
 }
 
+impl ToString for Flags {
+    fn to_string(&self) -> String {
+        self.bits().to_string()
+    }
+}
+
 fn get_parity(value: u8) -> bool {
     let mut result = 0;
     for i in 0..8 {

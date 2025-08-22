@@ -5,24 +5,104 @@ use std::{
 
 use eframe::CreationContext;
 use egui::{
-    text::LayoutJob, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, TextBuffer, Ui, WidgetText
+    Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, TextBuffer, Ui,
+    WidgetText, text::LayoutJob,
 };
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, NodeIndex, TabStyle, TabViewer};
 
-use crate::{common::Register, emu::CPU};
+use crate::{
+    common::{Register, RegisterPair},
+    emu::CPU,
+};
+
+struct DebugUIState {
+    a: String,
+    b: String,
+    c: String,
+    d: String,
+    e: String,
+    h: String,
+    l: String,
+    flags: String,
+    stack_pointer: String,
+    program_counter: String,
+}
+
+impl From<&CPU> for DebugUIState {
+    fn from(value: &CPU) -> Self {
+        DebugUIState {
+            a: format!("{:0>2x}", value.get_register(Register::A)),
+            b: format!("{:0>2x}", value.get_register(Register::B)),
+            c: format!("{:0>2x}", value.get_register(Register::C)),
+            d: format!("{:0>2x}", value.get_register(Register::D)),
+            e: format!("{:0>2x}", value.get_register(Register::E)),
+            h: format!("{:0>2x}", value.get_register(Register::H)),
+            l: format!("{:0>2x}", value.get_register(Register::L)),
+            program_counter: format!("{:0>4x}", value.get_rp(RegisterPair::PC)),
+            stack_pointer: format!("{:0>4x}", value.get_rp(RegisterPair::SP)),
+            flags: value.get_flags().to_string(),
+        }
+    }
+}
 
 struct AppState {
     cpu: CPU,
     editor: Editor,
+    debug_ui: DebugUIState,
 }
 
 impl AppState {
     fn new() -> Self {
+        let cpu = CPU::new();
+        let debug_ui = DebugUIState::from(&cpu);
+
         Self {
             editor: Editor::new(),
-            cpu: CPU::new(),
+            cpu,
+            debug_ui,
         }
     }
+}
+
+fn text_with_label(ui: &mut Ui, field: &mut String, label: &str, color: Color32) -> egui::Response {
+    let inner_response = ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+            let mut layout_job = LayoutJob::simple("".to_string(), FontId::default(), Color32::GRAY, wrap_width);
+            let mut value = buffer.as_str().to_string();
+            for character in buffer.as_str().chars() {
+                if character.is_digit(16) {
+                    value += &character.to_string();
+                }
+            }
+
+            layout_job.append(&value, 0.0, egui::TextFormat::default());
+
+            ui.fonts(|f| f.layout_job(layout_job))
+        };
+        let text_edit = egui::TextEdit::singleline(field).layouter(&mut layouter)
+            .horizontal_align(egui::Align::Center)
+            .vertical_align(egui::Align::Center)
+            .char_limit(2);
+        let label = egui::Label::new(WidgetText::RichText(Arc::new(
+            RichText::new(label)
+                .color(Color32::BLACK)
+                .background_color(color),
+        )));
+
+        let response = ui.add_sized([50.0, 30.0], text_edit);
+        let rect = response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.left_bottom() + egui::Vec2::new(0.0, ui.spacing().item_spacing.y), egui::vec2(50.0, 20.0)),
+            2.0,
+            color,
+        );
+        ui.add_sized([50.0, 20.0], label);
+
+        response
+    });
+
+    inner_response.response
 }
 
 impl TabViewer for AppState {
@@ -117,12 +197,40 @@ impl TabViewer for AppState {
                 ui.add_sized(ui.available_size(), code_widget);
             }
             TabType::Registers => {
-                ui.vertical(|ui| {
-                    let mut value = self.cpu.get_register(Register::A).to_string();
-                    ui.text_edit_singleline(&mut value);
-                    ui.label(WidgetText::RichText(Arc::new(RichText::new("A").color(Color32::RED).background_color(Color32::BLACK))));
+                egui::Grid::new("Registers").spacing([15.0, 15.0]).max_col_width(20.0).show(ui, |ui| {
+                    text_with_label(ui, &mut self.debug_ui.a, "A", Color32::from_hex("#7a0918").unwrap());
+                    ui.end_row();
+
+                    text_with_label(ui, &mut self.debug_ui.b, "B", Color32::from_hex("#007d8d").unwrap());
+                    text_with_label(ui, &mut self.debug_ui.c, "C", Color32::from_hex("#007d8d").unwrap());
+                    ui.end_row();
                 });
             }
+        }
+    }
+
+    fn on_rect_changed(&mut self, tab: &mut Self::Tab) {
+    }
+
+    fn tab_style_override(&self, tab: &Self::Tab, style: &TabStyle) -> Option<TabStyle> {
+        match tab.tab_type {
+            TabType::Registers => {
+                let mut new_style = style.clone();
+                new_style.tab_body.inner_margin = egui::Margin::same(10);
+                Some(new_style)
+            }
+            _ => None
+        }
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, tab: &Self::Tab) -> [bool; 2] {
+        match tab.tab_type {
+            TabType::Registers => [false, false],
+            TabType::Editor => [true, true],
         }
     }
 }
@@ -166,18 +274,21 @@ impl Tabs {
 
         let mut dock_state = DockState::new(tabs);
         let tree = dock_state.main_surface_mut();
-        tree.split_right(NodeIndex::root(), 0.8, vec![Tab {
-            title: "Registers".to_string(),
-            tab_type: TabType::Registers,
-        }]);
+        tree.split_right(
+            NodeIndex::root(),
+            0.8,
+            vec![Tab {
+                title: "Registers".to_string(),
+                tab_type: TabType::Registers,
+            }],
+        );
 
-        Tabs {
-            dock_state,
-        }
+        Tabs { dock_state }
     }
 
     fn ui(&mut self, ui: &mut Ui, app_state: &mut AppState) {
         DockArea::new(&mut self.dock_state)
+            .show_leaf_close_all_buttons(false)
             .show_close_buttons(false)
             .show_inside(ui, app_state);
     }

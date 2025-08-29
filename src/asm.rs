@@ -80,6 +80,16 @@ mod tests {
     }
 
     #[test]
+    fn db_parse() {
+        let directive = Directive::parse("db ff");
+        if let Ok(Directive::Db(value)) = directive {
+            assert_eq!(value, 0xff);
+        } else {
+            panic!("expected directive db, found {:?}", directive);
+        }
+    }
+
+    #[test]
     fn program_parse() {
         let program = ".org 2000
 .start
@@ -155,6 +165,21 @@ mov a, m";
         assert_eq!(assembled_program.memory[0x2001], 0x50);
         assert_eq!(assembled_program.memory[0x2002], 0x20);
         assert_eq!(assembled_program.memory[0x2003], OpCode::MovAM as u8);
+    }
+
+    #[test]
+    fn db_assemble() {
+        let program = ".org 2050
+.db ff
+
+.org 2000
+.start
+hlt";
+        let assembled_program = AssembledProgram::assemble(program);
+        assert!(assembled_program.is_ok());
+        let assembled_program = assembled_program.unwrap();
+
+        assert_eq!(assembled_program.memory[0x2050], 0xff);
     }
 }
 
@@ -1307,8 +1332,9 @@ impl Program {
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
-                if let Some(last_label) = last_label {
-                    label_table.insert(last_label.to_string(), intermediate_units.len() - 1);
+                if last_label.is_some() {
+                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    last_label = None
                 }
             } else {
                 let intermediate_unit;
@@ -1325,8 +1351,9 @@ impl Program {
                 address = Some(addr);
                 intermediate_units.push(intermediate_unit);
 
-                if let Some(last_label) = last_label {
-                    label_table.insert(last_label.to_string(), intermediate_units.len() - 1);
+                if last_label.is_some() {
+                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    last_label = None
                 }
 
                 let label = label.unwrap();

@@ -5,12 +5,60 @@ use std::{
 
 use eframe::CreationContext;
 use egui::{
-    Color32, FontData, FontDefinitions, FontFamily, FontId, Response, TextBuffer, Ui, Widget,
-    text::LayoutJob,
+    text::LayoutJob, Align, Color32, FontData, FontDefinitions, FontFamily, FontId, Label, Rect,
+    Response, RichText, TextBuffer, TextEdit, Ui, Vec2, Widget,
 };
 
-use crate::asm::AssembledProgram;
-use crate::emu::CPU;
+use crate::emu::{Operation, RegisterOperation, CPU};
+use crate::{asm::AssembledProgram, common::Register};
+
+struct RegisterUIState {
+    a: String,
+    b: String,
+    c: String,
+    d: String,
+    e: String,
+    h: String,
+    l: String,
+}
+
+impl RegisterUIState {
+    fn get(&mut self, register: Register) -> &mut String {
+        match register {
+            Register::A => &mut self.a,
+            Register::B => &mut self.b,
+            Register::C => &mut self.c,
+            Register::D => &mut self.d,
+            Register::E => &mut self.e,
+            Register::H => &mut self.h,
+            Register::L => &mut self.l,
+        }
+    }
+
+    fn update(&mut self, cpu: &CPU) {
+        self.a = format!("{:02x}", cpu.get_register(Register::A));
+        self.b = format!("{:02x}", cpu.get_register(Register::B));
+        self.c = format!("{:02x}", cpu.get_register(Register::C));
+        self.d = format!("{:02x}", cpu.get_register(Register::D));
+        self.e = format!("{:02x}", cpu.get_register(Register::E));
+        self.h = format!("{:02x}", cpu.get_register(Register::H));
+        self.l = format!("{:02x}", cpu.get_register(Register::L));
+    }
+}
+
+impl From<&CPU> for RegisterUIState {
+    fn from(cpu: &CPU) -> Self {
+        Self {
+            a: format!("{:02x}", cpu.get_register(Register::A)),
+            b: format!("{:02x}", cpu.get_register(Register::B)),
+            c: format!("{:02x}", cpu.get_register(Register::C)),
+            d: format!("{:02x}", cpu.get_register(Register::D)),
+            e: format!("{:02x}", cpu.get_register(Register::E)),
+            h: format!("{:02x}", cpu.get_register(Register::H)),
+            l: format!("{:02x}", cpu.get_register(Register::L)),
+        }
+    }
+}
 
 struct Editor {
     code: String,
@@ -122,9 +170,71 @@ impl<'editor> Widget for EditorWidget<'editor> {
     }
 }
 
+struct RegisterWidget<'a> {
+    register: Register,
+    color: Color32,
+    cpu: &'a mut CPU,
+    register_ui: &'a mut RegisterUIState,
+}
+
+impl<'a> RegisterWidget<'a> {
+    fn new(
+        register: Register,
+        color: Color32,
+        cpu: &'a mut CPU,
+        register_ui: &'a mut RegisterUIState,
+    ) -> Self {
+        Self {
+            register: register,
+            cpu,
+            color,
+            register_ui,
+        }
+    }
+}
+
+impl<'a> Widget for RegisterWidget<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let register_text = self.register_ui.get(self.register);
+        let text_edit = TextEdit::singleline(register_text)
+            .char_limit(2)
+            .horizontal_align(Align::Center)
+            .vertical_align(Align::Center);
+        let value = ui.add_sized([120.0, 25.0], text_edit);
+
+        if value.changed() {
+            if !register_text.is_empty() && u8::from_str_radix(register_text, 16).is_err() {
+                self.register_ui.a = "00".to_string();
+            } else if u8::from_str_radix(register_text, 16).is_ok() {
+                let value = u8::from_str_radix(register_text, 16).unwrap();
+                self.cpu.execute_op(Operation::Register(RegisterOperation {
+                    old_value: self.cpu.get_register(self.register),
+                    new_value: value,
+                    register: self.register,
+                }));
+            }
+        }
+
+        let rect = value.rect;
+        ui.painter().rect_filled(
+            Rect::from_min_size(
+                rect.left_bottom() + Vec2::new(0.0, ui.spacing().item_spacing.y),
+                Vec2::new(120.0, 25.0),
+            ),
+            2.0,
+            self.color,
+        );
+        ui.add_sized(
+            [120.0, 25.0],
+            Label::new(RichText::new(format!("{}", self.register)).color(Color32::BLACK)),
+        )
+    }
+}
+
 pub struct App {
     cpu: CPU,
     editor: Editor,
+    register_ui: RegisterUIState,
 }
 
 impl App {
@@ -143,8 +253,12 @@ impl App {
             .insert(0, "SourceCodePro-Regular".to_owned());
         creation_context.egui_ctx.set_fonts(fonts);
 
+        let cpu = CPU::new();
+        let register_ui = RegisterUIState::from(&cpu);
+
         Self {
-            cpu: CPU::new(),
+            cpu,
+            register_ui,
             editor: Editor::new(),
         }
     }
@@ -164,7 +278,9 @@ impl eframe::App for App {
                                 Ok(program) => {
                                     self.cpu.load_data(&program.get_memory(), 0);
                                     self.cpu.execute(program.get_entrypoint());
-                                    self.editor.status_bar = "program executed successfully".to_string();
+                                    self.editor.status_bar =
+                                        "program executed successfully".to_string();
+                                    self.register_ui.update(&self.cpu);
                                 }
                                 Err(err) => {
                                     self.editor.status_bar = err.to_string();
@@ -180,6 +296,14 @@ impl eframe::App for App {
                     });
                     ui.add(EditorWidget::new(&mut self.editor));
                 });
+            egui::Window::new("Registers").show(ctx, |ui| {
+                ui.add(RegisterWidget::new(
+                    Register::A,
+                    Color32::from_hex("#a51723").unwrap(),
+                    &mut self.cpu,
+                    &mut self.register_ui,
+                ));
+            });
         });
     }
 }

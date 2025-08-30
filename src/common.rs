@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -344,6 +346,20 @@ pub enum Register {
     H = 0b100,
     L = 0b101,
     A = 0b111,
+}
+
+impl Display for Register {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            Register::A => write!(f, "A"),
+            Register::B => write!(f, "B"),
+            Register::C => write!(f, "C"),
+            Register::D => write!(f, "D"),
+            Register::E => write!(f, "E"),
+            Register::H => write!(f, "H"),
+            Register::L => write!(f, "L"),
+        }
+    }
 }
 
 #[derive(Error, Debug)]

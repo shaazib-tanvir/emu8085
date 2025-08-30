@@ -36,12 +36,6 @@ bitflags! {
     }
 }
 
-impl ToString for Flags {
-    fn to_string(&self) -> String {
-        self.bits().to_string()
-    }
-}
-
 fn get_parity(value: u8) -> bool {
     let mut result = 0;
     for i in 0..8 {
@@ -227,34 +221,34 @@ impl CPUState {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct FlagsOperation {
-    old_flags: Flags,
-    new_flags: Flags,
+pub struct FlagsOperation {
+    pub old_flags: Flags,
+    pub new_flags: Flags,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct RegisterOperation {
-    old_value: u8,
-    new_value: u8,
-    register: Register,
+pub struct RegisterOperation {
+    pub old_value: u8,
+    pub new_value: u8,
+    pub register: Register,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct RegisterPairOperation {
-    old_value: u16,
-    new_value: u16,
-    register: RegisterPair,
+pub struct RegisterPairOperation {
+    pub old_value: u16,
+    pub new_value: u16,
+    pub register: RegisterPair,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct MemoryOperation {
-    address: u16,
-    old_value: u8,
-    new_value: u8,
+pub struct MemoryOperation {
+    pub address: u16,
+    pub old_value: u8,
+    pub new_value: u8,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum Operation {
+pub enum Operation {
     Register(RegisterOperation),
     RegisterPair(RegisterPairOperation),
     Memory(MemoryOperation),
@@ -302,6 +296,10 @@ impl CPU {
             commands: VecDeque::new(),
             instruction_count: 0,
         }
+    }
+
+    pub fn execute_op(&mut self, operation: Operation) {
+        self.cpu_state.execute_op(operation);
     }
 
     fn push_command(&mut self, operation: Operation) {

@@ -5,11 +5,11 @@ use std::{
 
 use eframe::CreationContext;
 use egui::{
-    text::LayoutJob, Align, Color32, FontData, FontDefinitions, FontFamily, FontId, Label, Rect,
-    Response, RichText, TextBuffer, TextEdit, Ui, Vec2, Widget,
+    Align, Color32, FontData, FontDefinitions, FontFamily, FontId, Response, RichText, TextBuffer,
+    TextEdit, Ui, Widget, text::LayoutJob,
 };
 
-use crate::emu::{Operation, RegisterOperation, CPU};
+use crate::emu::{CPU, Flags, Operation, RegisterOperation};
 use crate::{asm::AssembledProgram, common::Register};
 
 struct RegisterUIState {
@@ -20,6 +20,11 @@ struct RegisterUIState {
     e: String,
     h: String,
     l: String,
+    carry_flag: bool,
+    parity_flag: bool,
+    auxiliary_carry_flag: bool,
+    zero_flag: bool,
+    sign_flag: bool,
 }
 
 impl RegisterUIState {
@@ -43,6 +48,11 @@ impl RegisterUIState {
         self.e = format!("{:02x}", cpu.get_register(Register::E));
         self.h = format!("{:02x}", cpu.get_register(Register::H));
         self.l = format!("{:02x}", cpu.get_register(Register::L));
+        self.carry_flag = cpu.get_flags().contains(Flags::CARRY);
+        self.parity_flag = cpu.get_flags().contains(Flags::PARITY);
+        self.auxiliary_carry_flag = cpu.get_flags().contains(Flags::AUXILIARY_CARRY);
+        self.zero_flag = cpu.get_flags().contains(Flags::ZERO);
+        self.sign_flag = cpu.get_flags().contains(Flags::SIGN);
     }
 }
 
@@ -56,6 +66,11 @@ impl From<&CPU> for RegisterUIState {
             e: format!("{:02x}", cpu.get_register(Register::E)),
             h: format!("{:02x}", cpu.get_register(Register::H)),
             l: format!("{:02x}", cpu.get_register(Register::L)),
+            carry_flag: cpu.get_flags().contains(Flags::CARRY),
+            parity_flag: cpu.get_flags().contains(Flags::PARITY),
+            auxiliary_carry_flag: cpu.get_flags().contains(Flags::AUXILIARY_CARRY),
+            zero_flag: cpu.get_flags().contains(Flags::ZERO),
+            sign_flag: cpu.get_flags().contains(Flags::SIGN),
         }
     }
 }
@@ -127,7 +142,7 @@ impl<'editor> Widget for EditorWidget<'editor> {
                         None => (unit, None),
                     };
 
-                    if mnemonic.starts_with(".") {
+                    if mnemonic.starts_with(".") && !mnemonic.is_empty() {
                         layout_job.append(
                             mnemonic,
                             0.0,
@@ -136,7 +151,7 @@ impl<'editor> Widget for EditorWidget<'editor> {
                                 ..Default::default()
                             },
                         );
-                    } else {
+                    } else if !mnemonic.is_empty() {
                         layout_job.append(
                             mnemonic,
                             0.0,
@@ -170,6 +185,48 @@ impl<'editor> Widget for EditorWidget<'editor> {
     }
 }
 
+struct FlagWidget<'a> {
+    flag_text: &'a str,
+    color: Color32,
+    cpu: &'a mut CPU,
+    flag_value: &'a mut bool,
+}
+
+impl<'a> FlagWidget<'a> {
+    fn new(flag_text: &'a str, color: Color32, cpu: &'a mut CPU, flag_value: &'a mut bool) -> Self {
+        Self {
+            flag_text,
+            color,
+            cpu,
+            flag_value,
+        }
+    }
+}
+
+impl<'a> Widget for FlagWidget<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        ui.vertical(|ui| {
+            let text = if *self.flag_value { "1" } else { "0" };
+            // ui.add_sized(
+            //     toggle.rect.size(),
+            //     egui::Label::new(self.flag_text).halign(Align::Center),
+            // );
+            let label_button = egui::Button::new(
+                RichText::new(self.flag_text)
+                    .color(Color32::BLACK)
+                    .text_style(egui::TextStyle::Body),
+            )
+            .fill(self.color)
+            .sense(egui::Sense::empty());
+            let toggle = ui.toggle_value(self.flag_value, text);
+            ui.add_sized(toggle.rect.size(), label_button);
+
+            toggle
+        })
+        .response
+    }
+}
+
 struct RegisterWidget<'a> {
     register: Register,
     color: Color32,
@@ -195,39 +252,38 @@ impl<'a> RegisterWidget<'a> {
 
 impl<'a> Widget for RegisterWidget<'a> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let register_text = self.register_ui.get(self.register);
-        let text_edit = TextEdit::singleline(register_text)
-            .char_limit(2)
-            .horizontal_align(Align::Center)
-            .vertical_align(Align::Center);
-        let value = ui.add_sized([120.0, 25.0], text_edit);
+        ui.vertical(|ui| {
+            let register_text = self.register_ui.get(self.register);
+            let text_edit = TextEdit::singleline(register_text)
+                .char_limit(2)
+                .horizontal_align(Align::Center)
+                .vertical_align(Align::Center);
+            let label_button = egui::Button::new(
+                RichText::new(format!("{}", self.register))
+                    .color(Color32::BLACK)
+                    .text_style(egui::TextStyle::Body),
+            )
+            .fill(self.color)
+            .sense(egui::Sense::empty());
+            let value = ui.add_sized([120.0, 25.0], text_edit);
+            ui.add_sized([120.0, 25.0], label_button);
 
-        if value.changed() {
-            if !register_text.is_empty() && u8::from_str_radix(register_text, 16).is_err() {
-                self.register_ui.a = "00".to_string();
-            } else if u8::from_str_radix(register_text, 16).is_ok() {
-                let value = u8::from_str_radix(register_text, 16).unwrap();
-                self.cpu.execute_op(Operation::Register(RegisterOperation {
-                    old_value: self.cpu.get_register(self.register),
-                    new_value: value,
-                    register: self.register,
-                }));
+            if value.changed() {
+                if !register_text.is_empty() && u8::from_str_radix(register_text, 16).is_err() {
+                    self.register_ui.a = "00".to_string();
+                } else if u8::from_str_radix(register_text, 16).is_ok() {
+                    let value = u8::from_str_radix(register_text, 16).unwrap();
+                    self.cpu.execute_op(Operation::Register(RegisterOperation {
+                        old_value: self.cpu.get_register(self.register),
+                        new_value: value,
+                        register: self.register,
+                    }));
+                }
             }
-        }
 
-        let rect = value.rect;
-        ui.painter().rect_filled(
-            Rect::from_min_size(
-                rect.left_bottom() + Vec2::new(0.0, ui.spacing().item_spacing.y),
-                Vec2::new(120.0, 25.0),
-            ),
-            2.0,
-            self.color,
-        );
-        ui.add_sized(
-            [120.0, 25.0],
-            Label::new(RichText::new(format!("{}", self.register)).color(Color32::BLACK)),
-        )
+            value
+        })
+        .response
     }
 }
 
@@ -266,7 +322,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |_ui| {
             egui::Window::new("Editor")
                 .default_width(800.0)
                 .default_height(600.0)
@@ -303,6 +359,78 @@ impl eframe::App for App {
                     &mut self.cpu,
                     &mut self.register_ui,
                 ));
+
+                ui.horizontal(|ui| {
+                    ui.add(RegisterWidget::new(
+                        Register::B,
+                        Color32::from_hex("#00822f").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                    ui.add(RegisterWidget::new(
+                        Register::C,
+                        Color32::from_hex("#00822f").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.add(RegisterWidget::new(
+                        Register::D,
+                        Color32::from_hex("#0e6bb7").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                    ui.add(RegisterWidget::new(
+                        Register::E,
+                        Color32::from_hex("#0e6bb7").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.add(RegisterWidget::new(
+                        Register::H,
+                        Color32::from_hex("#f9d222").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                    ui.add(RegisterWidget::new(
+                        Register::L,
+                        Color32::from_hex("#f9d222").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui,
+                    ));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.add(FlagWidget::new(
+                        "S",
+                        Color32::from_hex("#ea7cc4").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui.sign_flag,
+                    ));
+                    ui.add(FlagWidget::new(
+                        "Z",
+                        Color32::from_hex("#ea7cc4").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui.zero_flag,
+                    ));
+                    ui.add(FlagWidget::new(
+                        "P",
+                        Color32::from_hex("#ea7cc4").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui.parity_flag,
+                    ));
+                    ui.add(FlagWidget::new(
+                        "C",
+                        Color32::from_hex("#ea7cc4").unwrap(),
+                        &mut self.cpu,
+                        &mut self.register_ui.carry_flag,
+                    ));
+                });
             });
         });
     }

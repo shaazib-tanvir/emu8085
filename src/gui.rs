@@ -6,11 +6,48 @@ use std::{
 use eframe::CreationContext;
 use egui::{
     Align, Color32, FontData, FontDefinitions, FontFamily, FontId, Response, RichText, TextBuffer,
-    TextEdit, Ui, Widget, text::LayoutJob,
+    TextEdit, Ui, Vec2, Widget, text::LayoutJob,
 };
 
-use crate::emu::{CPU, Flags, Operation, RegisterOperation};
+use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation};
 use crate::{asm::AssembledProgram, common::Register};
+
+const ROW_COUNT: usize = 2;
+const COLUMN_COUNT: usize = 0x10;
+
+struct MemoryUIState {
+    address: String,
+    bytes: [[String; COLUMN_COUNT]; ROW_COUNT],
+}
+
+impl MemoryUIState {
+    fn update(&mut self, cpu: &CPU) {
+        for i in 0..ROW_COUNT {
+            for j in 0..COLUMN_COUNT {
+                let k =
+                    (j + i * COLUMN_COUNT) as u16 + u16::from_str_radix(&self.address, 16).unwrap();
+                self.bytes[i][j] = format!("{:02x}", cpu.get_memory_at(k));
+            }
+        }
+    }
+}
+
+impl From<&CPU> for MemoryUIState {
+    fn from(cpu: &CPU) -> Self {
+        let mut bytes: [[String; COLUMN_COUNT]; ROW_COUNT] = Default::default();
+        for i in 0..ROW_COUNT {
+            for j in 0..COLUMN_COUNT {
+                let k = j + i * COLUMN_COUNT;
+                bytes[i][j] = format!("{:02x}", cpu.get_memory_at(k as u16));
+            }
+        }
+
+        Self {
+            address: "0000".to_string(),
+            bytes,
+        }
+    }
+}
 
 struct RegisterUIState {
     a: String,
@@ -186,6 +223,7 @@ impl<'editor> Widget for EditorWidget<'editor> {
 }
 
 struct FlagWidget<'a> {
+    flag: Flags,
     flag_text: &'a str,
     color: Color32,
     cpu: &'a mut CPU,
@@ -193,8 +231,15 @@ struct FlagWidget<'a> {
 }
 
 impl<'a> FlagWidget<'a> {
-    fn new(flag_text: &'a str, color: Color32, cpu: &'a mut CPU, flag_value: &'a mut bool) -> Self {
+    fn new(
+        flag: Flags,
+        flag_text: &'a str,
+        color: Color32,
+        cpu: &'a mut CPU,
+        flag_value: &'a mut bool,
+    ) -> Self {
         Self {
+            flag,
             flag_text,
             color,
             cpu,
@@ -207,10 +252,6 @@ impl<'a> Widget for FlagWidget<'a> {
     fn ui(self, ui: &mut Ui) -> Response {
         ui.vertical(|ui| {
             let text = if *self.flag_value { "1" } else { "0" };
-            // ui.add_sized(
-            //     toggle.rect.size(),
-            //     egui::Label::new(self.flag_text).halign(Align::Center),
-            // );
             let label_button = egui::Button::new(
                 RichText::new(self.flag_text)
                     .color(Color32::BLACK)
@@ -220,6 +261,16 @@ impl<'a> Widget for FlagWidget<'a> {
             .sense(egui::Sense::empty());
             let toggle = ui.toggle_value(self.flag_value, text);
             ui.add_sized(toggle.rect.size(), label_button);
+
+            if toggle.changed() {
+                let mut new_flags = self.cpu.get_flags();
+                new_flags.toggle(self.flag);
+
+                self.cpu.execute_op(Operation::Flags(FlagsOperation {
+                    old_flags: self.cpu.get_flags(),
+                    new_flags: new_flags,
+                }));
+            }
 
             toggle
         })
@@ -271,6 +322,11 @@ impl<'a> Widget for RegisterWidget<'a> {
             if value.changed() {
                 if !register_text.is_empty() && u8::from_str_radix(register_text, 16).is_err() {
                     self.register_ui.a = "00".to_string();
+                    self.cpu.execute_op(Operation::Register(RegisterOperation {
+                        old_value: self.cpu.get_register(self.register),
+                        new_value: 0,
+                        register: self.register,
+                    }));
                 } else if u8::from_str_radix(register_text, 16).is_ok() {
                     let value = u8::from_str_radix(register_text, 16).unwrap();
                     self.cpu.execute_op(Operation::Register(RegisterOperation {
@@ -291,6 +347,7 @@ pub struct App {
     cpu: CPU,
     editor: Editor,
     register_ui: RegisterUIState,
+    memory_ui: MemoryUIState,
 }
 
 impl App {
@@ -311,10 +368,12 @@ impl App {
 
         let cpu = CPU::new();
         let register_ui = RegisterUIState::from(&cpu);
+        let memory_ui = MemoryUIState::from(&cpu);
 
         Self {
             cpu,
             register_ui,
+            memory_ui,
             editor: Editor::new(),
         }
     }
@@ -407,29 +466,71 @@ impl eframe::App for App {
 
                 ui.horizontal(|ui| {
                     ui.add(FlagWidget::new(
+                        Flags::SIGN,
                         "S",
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.sign_flag,
                     ));
                     ui.add(FlagWidget::new(
+                        Flags::ZERO,
                         "Z",
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.zero_flag,
                     ));
                     ui.add(FlagWidget::new(
+                        Flags::PARITY,
                         "P",
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.parity_flag,
                     ));
                     ui.add(FlagWidget::new(
+                        Flags::CARRY,
                         "C",
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.carry_flag,
                     ));
+                });
+            });
+
+            egui::Window::new("Memory").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let address_field =
+                        TextEdit::singleline(&mut self.memory_ui.address).char_limit(4);
+                    ui.label("Address: ");
+                    if ui.add_sized([40.0, 20.0], address_field).changed() {
+                        if self.memory_ui.address != ""
+                            && u16::from_str_radix(&self.memory_ui.address, 16).is_err()
+                        {
+                            self.memory_ui.address = "0000".to_string();
+                        }
+                    }
+                });
+                ui.allocate_space(Vec2::new(0.0, ui.style().spacing.item_spacing.y));
+
+                egui::Grid::new("Memory Grid").show(ui, |ui| {
+                    for i in 0..ROW_COUNT {
+                        let base_address =
+                            u16::from_str_radix(&self.memory_ui.address, 16).unwrap_or_default();
+
+                        ui.label(format!(
+                            "{:04x}:",
+                            base_address.wrapping_add((i * COLUMN_COUNT) as u16)
+                        ));
+                        for j in 0..COLUMN_COUNT {
+                            let address = base_address + j as u16;
+                            ui.add(
+                                TextEdit::singleline(&mut self.memory_ui.bytes[i][j])
+                                    .char_limit(2)
+                                    .horizontal_align(Align::Center)
+                                    .vertical_align(Align::Center),
+                            );
+                        }
+                        ui.end_row();
+                    }
                 });
             });
         });

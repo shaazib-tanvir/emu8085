@@ -343,6 +343,46 @@ impl<'a> Widget for RegisterWidget<'a> {
     }
 }
 
+struct MemoryCellWidget<'a> {
+    address: u16,
+    byte: &'a mut String,
+    cpu: &'a mut CPU,
+}
+
+impl<'a> MemoryCellWidget<'a> {
+    fn new(address: u16, byte: &'a mut String, cpu: &'a mut CPU) -> Self {
+        Self {
+            address,
+            byte,
+            cpu,
+        }
+    }
+}
+
+impl<'a> Widget for MemoryCellWidget<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let text_edit = TextEdit::singleline(self.byte)
+                .char_limit(2)
+                .horizontal_align(Align::Center)
+                .vertical_align(Align::Center);
+        let response = ui.add(text_edit);
+
+        if response.changed() {
+            let value = u8::from_str_radix(self.byte, 16);
+            
+            if self.byte != "" && value.is_err() {
+                self.byte.clear();
+                self.byte.push_str("00");
+            } else {
+                let value = value.unwrap_or_default();
+                self.cpu.load_data(&[value], self.address);
+            }
+        }
+
+        response
+    }
+}
+
 pub struct App {
     cpu: CPU,
     editor: Editor,
@@ -396,6 +436,7 @@ impl eframe::App for App {
                                     self.editor.status_bar =
                                         "program executed successfully".to_string();
                                     self.register_ui.update(&self.cpu);
+                                    self.memory_ui.update(&self.cpu);
                                 }
                                 Err(err) => {
                                     self.editor.status_bar = err.to_string();
@@ -522,12 +563,7 @@ impl eframe::App for App {
                         ));
                         for j in 0..COLUMN_COUNT {
                             let address = base_address + j as u16;
-                            ui.add(
-                                TextEdit::singleline(&mut self.memory_ui.bytes[i][j])
-                                    .char_limit(2)
-                                    .horizontal_align(Align::Center)
-                                    .vertical_align(Align::Center),
-                            );
+                            ui.add(MemoryCellWidget::new(address, &mut self.memory_ui.bytes[i][j], &mut self.cpu));
                         }
                         ui.end_row();
                     }

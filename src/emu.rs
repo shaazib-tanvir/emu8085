@@ -323,7 +323,7 @@ impl CPU {
         let value = self.cpu_state.get_memory_pc();
         let op = Operation::RegisterPair(RegisterPairOperation {
             old_value: self.cpu_state.get_address_pc(),
-            new_value: self.cpu_state.get_address_pc() + 1,
+            new_value: self.cpu_state.get_address_pc().wrapping_add(1),
             register: RegisterPair::PC,
         });
         self.cpu_state.execute_op(op);
@@ -335,10 +335,10 @@ impl CPU {
         let value0 = self.cpu_state.get_memory_pc();
         let value1 = self
             .cpu_state
-            .get_memory_at(self.cpu_state.get_address_pc() + 1);
+            .get_memory_at(self.cpu_state.get_address_pc().wrapping_add(1));
         let op = Operation::RegisterPair(RegisterPairOperation {
             old_value: self.cpu_state.get_address_pc(),
-            new_value: self.cpu_state.get_address_pc() + 2,
+            new_value: self.cpu_state.get_address_pc().wrapping_add(2),
             register: RegisterPair::PC,
         });
         self.cpu_state.execute_op(op);
@@ -700,9 +700,10 @@ impl CPU {
                 self.push_command(op);
             }
             OpCode::Sta => {
+                let address = self.read_double_bytes();
                 let op = Operation::Memory(MemoryOperation {
-                    address: self.cpu_state.get_address_hl(),
-                    old_value: self.cpu_state.get_memory_hl(),
+                    address: address,
+                    old_value: self.cpu_state.get_memory_at(address),
                     new_value: self.cpu_state.get_register(Register::A),
                 });
 
@@ -710,10 +711,11 @@ impl CPU {
                 self.push_command(op);
             }
             OpCode::Lda => {
+                let address = self.read_double_bytes();
                 let op = Operation::Register(RegisterOperation {
                     register: Register::A,
                     old_value: self.cpu_state.get_register(Register::A),
-                    new_value: self.cpu_state.get_memory_hl(),
+                    new_value: self.cpu_state.get_memory_at(address),
                 });
 
                 self.cpu_state.execute_op(op);

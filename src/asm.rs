@@ -99,9 +99,10 @@ mov a, m";
         assert!(program.is_ok(), "program did not parse: {:?}", program);
 
         let program = program.unwrap();
-        assert_eq!(program.units.len(), 4);
+        let section = program.sections.get(0).unwrap();
+        assert_eq!(section.units.len(), 4);
         assert_eq!(
-            program.units.get(0).cloned().unwrap(),
+            section.units.get(0).cloned().unwrap(),
             IntermediateUnit {
                 line: Line {
                     line: ".org 2000".to_string(),
@@ -112,7 +113,7 @@ mov a, m";
             }
         );
         assert_eq!(
-            program.units.get(1).cloned().unwrap(),
+            section.units.get(1).cloned().unwrap(),
             IntermediateUnit {
                 line: Line {
                     line: ".start".to_string(),
@@ -123,7 +124,7 @@ mov a, m";
             }
         );
         assert_eq!(
-            program.units.get(2).cloned().unwrap(),
+            section.units.get(2).cloned().unwrap(),
             IntermediateUnit {
                 line: Line {
                     line: "lxi h, 2050".to_string(),
@@ -137,7 +138,7 @@ mov a, m";
             }
         );
         assert_eq!(
-            program.units.get(3).cloned().unwrap(),
+            section.units.get(3).cloned().unwrap(),
             IntermediateUnit {
                 line: Line {
                     line: "mov a, m".to_string(),
@@ -161,10 +162,13 @@ mov a, m";
         assert!(assembled_program.is_ok());
         let assembled_program = assembled_program.unwrap();
 
-        assert_eq!(assembled_program.memory[0x2000], OpCode::LxiH as u8);
-        assert_eq!(assembled_program.memory[0x2001], 0x50);
-        assert_eq!(assembled_program.memory[0x2002], 0x20);
-        assert_eq!(assembled_program.memory[0x2003], OpCode::MovAM as u8);
+        assert!(assembled_program.segments.get(0).is_some());
+        let segment = assembled_program.segments.get(0).unwrap();
+        assert_eq!(segment.address, 0x2000);
+        assert_eq!(*segment.data.get(0).unwrap(), OpCode::LxiH as u8);
+        assert_eq!(*segment.data.get(1).unwrap(), 0x50);
+        assert_eq!(*segment.data.get(2).unwrap(), 0x20);
+        assert_eq!(*segment.data.get(3).unwrap(), OpCode::MovAM as u8);
     }
 
     #[test]
@@ -179,7 +183,8 @@ hlt";
         assert!(assembled_program.is_ok());
         let assembled_program = assembled_program.unwrap();
 
-        assert_eq!(assembled_program.memory[0x2050], 0xff);
+        assert_eq!(assembled_program.segments.get(0).unwrap().address, 0x2050);
+        assert_eq!(*assembled_program.segments.get(0).unwrap().data.get(0).unwrap(), 0xff);
     }
 }
 
@@ -1100,9 +1105,15 @@ struct IntermediateUnit {
 }
 
 #[derive(Debug)]
-pub struct Program {
+pub struct Section {
+    address: u16,
     units: Vec<IntermediateUnit>,
-    label_table: HashMap<String, usize>,
+}
+
+#[derive(Debug)]
+pub struct Program {
+    sections: Vec<Section>,
+    label_table: HashMap<String, u16>,
     entrypoint: u16,
 }
 
@@ -1204,9 +1215,24 @@ pub enum AssembleError {
     LabelNotFound { line: Line, label: String },
 }
 
+pub struct Segment {
+    address: u16,
+    data: Vec<u8>,
+}
+
+impl Segment {
+    pub fn address(&self) -> u16 {
+        self.address
+    }
+
+    pub fn data(&self) -> &Vec<u8> {
+        &self.data
+    }
+}
+
 pub struct AssembledProgram {
     entrypoint: u16,
-    memory: [u8; 0x10000],
+    segments: Vec<Segment>,
 }
 
 impl Program {
@@ -1282,7 +1308,7 @@ impl Program {
         let mut entrypoint = None;
         let mut last_label = None;
 
-        let mut intermediate_units = vec![];
+        let mut sections = vec![];
         let mut label_table = HashMap::new();
 
         for (line_number, line) in lines.enumerate() {
@@ -1329,11 +1355,23 @@ impl Program {
                     ),
                     Some(Line::new(line.to_string(), line_number)),
                 )?;
+
+                if let Unit::Directive(directive) = intermediate_unit.unit {
+                    if let Directive::Org(address) = directive {
+                        sections.push(Section {
+                            address: address,
+                            units: vec![],
+                        });
+                    }
+                }
+
                 address = Some(addr);
-                intermediate_units.push(intermediate_unit);
+                let section = sections.last_mut().unwrap();
+                let unit_address = intermediate_unit.address;
+                section.units.push(intermediate_unit);
 
                 if last_label.is_some() {
-                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    label_table.insert(last_label.unwrap().to_string(), unit_address);
                     last_label = None
                 }
             } else {
@@ -1348,16 +1386,29 @@ impl Program {
                     ),
                     Some(Line::new(line.to_string(), line_number)),
                 )?;
+
+                if let Unit::Directive(directive) = intermediate_unit.unit {
+                    if let Directive::Org(address) = directive {
+                        sections.push(Section {
+                            address: address,
+                            units: vec![],
+                        });
+                    }
+                }
+
                 address = Some(addr);
-                intermediate_units.push(intermediate_unit);
+                let section = sections.last_mut().unwrap();
+                let unit_address = intermediate_unit.address;
+                section.units.push(intermediate_unit);
+
 
                 if last_label.is_some() {
-                    label_table.insert(last_label.unwrap().to_string(), intermediate_units.len() - 1);
+                    label_table.insert(last_label.unwrap().to_string(), unit_address);
                     last_label = None
                 }
 
                 let label = label.unwrap();
-                label_table.insert(label.to_string(), intermediate_units.len() - 1);
+                label_table.insert(label.to_string(), unit_address);
             }
         }
 
@@ -1366,7 +1417,7 @@ impl Program {
         }
 
         Ok(Self {
-            units: intermediate_units,
+            sections,
             label_table,
             entrypoint: entrypoint.unwrap(),
         })
@@ -1376,63 +1427,63 @@ impl Program {
 impl AssembledProgram {
     pub fn assemble(program: &str) -> Result<AssembledProgram, AssembleError> {
         let program = Program::parse(program)?;
-        let mut memory: [u8; 0x10000] = [0; 0x10000];
-        for intermediate_unit in &program.units {
-            match &intermediate_unit.unit {
-                Unit::Directive(directive) => match directive {
-                    Directive::Db(value) => {
-                        memory[intermediate_unit.address as usize] = *value;
-                    }
-                    Directive::Rs => {
-                        memory[intermediate_unit.address as usize] = 0;
-                    }
-                    _ => {}
-                },
-                Unit::Instruction(instruction) => match instruction {
-                    Instruction::NoData(instruction) => {
-                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                    }
-                    Instruction::ImByte(instruction) => {
-                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                        memory[(intermediate_unit.address + 1) as usize] = instruction.operand;
-                    }
-                    Instruction::ImWord(instruction) => {
-                        memory[intermediate_unit.address as usize] = instruction.opcode as u8;
-                        let addr: u16 = match &instruction.operand {
-                            Word::Label(label) => {
-                                let index = program.label_table.get(label);
-                                if index.is_none() {
-                                    return Err(AssembleError::LabelNotFound {
-                                        line: intermediate_unit.line.clone(),
-                                        label: label.to_string(),
-                                    });
-                                }
+        let mut segments = vec![];
+        for section in &program.sections {
+            let mut data = vec![];
 
-                                let index = index.unwrap();
-                                let labeled_unit = program.units.get(*index);
-                                if labeled_unit.is_none() {
-                                    return Err(AssembleError::LabelNotFound {
-                                        line: intermediate_unit.line.clone(),
-                                        label: label.to_string(),
-                                    });
-                                }
-                                let labeled_unit = labeled_unit.unwrap();
-                                labeled_unit.address
-                            }
-                            Word::U16(address) => *address,
-                        };
+            for intermediate_unit in &section.units {
+                match &intermediate_unit.unit {
+                    Unit::Directive(directive) => match directive {
+                        Directive::Db(value) => {
+                            data.push(*value);
+                        }
+                        Directive::Rs => {
+                            data.push(0);
+                        }
+                        _ => {}
+                    },
+                    Unit::Instruction(instruction) => match instruction {
+                        Instruction::NoData(instruction) => {
+                            data.push(instruction.opcode as u8);
+                        }
+                        Instruction::ImByte(instruction) => {
+                            data.push(instruction.opcode as u8);
+                            data.push(instruction.operand);
+                        }
+                        Instruction::ImWord(instruction) => {
+                            data.push(instruction.opcode as u8);
+                            let addr: u16 = match &instruction.operand {
+                                Word::Label(label) => {
+                                    let address = program.label_table.get(label);
+                                    if address.is_none() {
+                                        return Err(AssembleError::LabelNotFound {
+                                            line: intermediate_unit.line.clone(),
+                                            label: label.to_string(),
+                                        });
+                                    }
 
-                        let [lower, higher] = u16_to_pair(addr);
-                        memory[(intermediate_unit.address + 1) as usize] = lower;
-                        memory[(intermediate_unit.address + 2) as usize] = higher;
-                    }
-                },
+                                    *address.unwrap()
+                                }
+                                Word::U16(address) => *address,
+                            };
+
+                            let [lower, higher] = u16_to_pair(addr);
+                            data.push(lower);
+                            data.push(higher);
+                        }
+                    },
+                }
             }
+
+            segments.push(Segment {
+                address: section.address,
+                data,
+            });
         }
 
         Ok(Self {
-            memory,
             entrypoint: program.entrypoint,
+            segments,
         })
     }
 
@@ -1441,33 +1492,33 @@ impl AssembledProgram {
         Self::assemble(&contents)
     }
 
-    pub fn get_memory(&self) -> [u8; 0x10000] {
-        self.memory
-    }
-
     pub fn get_entrypoint(&self) -> u16 {
         self.entrypoint
     }
 
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
-        let mut file = fs::File::create(&path)?;
-        file.write_all(&u16_to_pair(self.get_entrypoint()))?;
-        file.write_all(&self.memory)?;
-
-        Ok(())
+    pub fn segments(&self) -> &Vec<Segment> {
+        &self.segments
     }
 
-    pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let mut memory: [u8; 0x10000] = [0; 0x10000];
-        let mut entrypoint: [u8; 2] = [0; 2];
+    // pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+    //     let mut file = fs::File::create(&path)?;
+    //     file.write_all(&u16_to_pair(self.get_entrypoint()))?;
+    //     file.write_all(&self.memory)?;
+    //
+    //     Ok(())
+    // }
 
-        let mut file = fs::File::open(&path)?;
-        file.read_exact(&mut entrypoint)?;
-        file.read_exact(&mut memory)?;
-
-        Ok(AssembledProgram {
-            entrypoint: pair_to_u16(entrypoint),
-            memory,
-        })
-    }
+    // pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+    //     let mut memory: [u8; 0x10000] = [0; 0x10000];
+    //     let mut entrypoint: [u8; 2] = [0; 2];
+    //
+    //     let mut file = fs::File::open(&path)?;
+    //     file.read_exact(&mut entrypoint)?;
+    //     file.read_exact(&mut memory)?;
+    //
+    //     Ok(AssembledProgram {
+    //         entrypoint: pair_to_u16(entrypoint),
+    //         memory,
+    //     })
+    // }
 }

@@ -12,7 +12,7 @@ use egui::{
 use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation};
 use crate::{asm::AssembledProgram, common::Register};
 
-const ROW_COUNT: usize = 2;
+const ROW_COUNT: usize = 4;
 const COLUMN_COUNT: usize = 0x10;
 
 struct MemoryUIState {
@@ -25,7 +25,7 @@ impl MemoryUIState {
         for i in 0..ROW_COUNT {
             for j in 0..COLUMN_COUNT {
                 let k =
-                    (j + i * COLUMN_COUNT) as u16 + u16::from_str_radix(&self.address, 16).unwrap();
+                    (j + i * COLUMN_COUNT) as u16 + u16::from_str_radix(&self.address, 16).unwrap_or_default();
                 self.bytes[i][j] = format!("{:02x}", cpu.get_memory_at(k));
             }
         }
@@ -385,6 +385,7 @@ impl<'a> Widget for MemoryCellWidget<'a> {
 
 pub struct App {
     cpu: CPU,
+    running: bool,
     editor: Editor,
     register_ui: RegisterUIState,
     memory_ui: MemoryUIState,
@@ -414,6 +415,7 @@ impl App {
             cpu,
             register_ui,
             memory_ui,
+            running: false,
             editor: Editor::new(),
         }
     }
@@ -431,7 +433,9 @@ impl eframe::App for App {
                             let program = AssembledProgram::assemble(&self.editor.code);
                             match program {
                                 Ok(program) => {
-                                    self.cpu.load_data(&program.get_memory(), 0);
+                                    for segment in program.segments() {
+                                        self.cpu.load_data(&segment.data().as_slice(), segment.address());
+                                    }
                                     self.cpu.execute(program.get_entrypoint());
                                     self.editor.status_bar =
                                         "program executed successfully".to_string();
@@ -548,6 +552,8 @@ impl eframe::App for App {
                         {
                             self.memory_ui.address = "0000".to_string();
                         }
+
+                        self.memory_ui.update(&self.cpu);
                     }
                 });
                 ui.allocate_space(Vec2::new(0.0, ui.style().spacing.item_spacing.y));

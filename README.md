@@ -12,10 +12,10 @@
 - [x] Jump Instructions
 - [ ] Stack Instructions
 - [ ] Function Calling
-- [ ] Assembler Instructions
+- [x] Assembler Instructions
 - [x] Assembler Directives
 - [x] Assembler Algorithm
-- [ ] GUI
+- [x] GUI
 
 ### Contribution
 

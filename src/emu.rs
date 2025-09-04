@@ -1436,6 +1436,10 @@ impl CPU {
         Ok(())
     }
 
+    pub fn load_entrypoint(&mut self, entrypoint: u16) {
+        self.cpu_state.registers.program_counter = entrypoint;
+    }
+
     pub fn execute(&mut self, entrypoint: u16) {
         self.cpu_state.registers.program_counter = entrypoint;
         loop {

@@ -939,6 +939,24 @@ impl Instruction {
 
                 Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
+            "cmp" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                            OperandParseError::InsufficientOperands {
+                                expected: 1,
+                                got: 0,
+                            },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let rm = parse_rm(&operands)?;
+
+                let opcode = 0b10111000 + (rm as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+
+                Ok(Instruction::NoData(InstructionNoData { opcode }))
+            }
             "sbb" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(

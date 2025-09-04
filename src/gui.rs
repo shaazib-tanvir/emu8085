@@ -1,7 +1,6 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
-    time::Instant,
 };
 
 use eframe::CreationContext;
@@ -9,6 +8,7 @@ use egui::{
     Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Response, RichText,
     TextBuffer, TextEdit, Ui, Vec2, Widget, text::LayoutJob,
 };
+use web_time::{Duration, Instant};
 
 use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation, StepError};
 use crate::{asm::AssembledProgram, common::Register};
@@ -428,7 +428,7 @@ impl App {
             register_ui: register_ui,
             memory_ui: memory_ui,
             running: false,
-            last_update: std::time::Instant::now(),
+            last_update: Instant::now(),
             editor: Editor::new(),
         }
     }
@@ -480,10 +480,9 @@ impl eframe::App for App {
                                     self.register_ui.update(&self.cpu);
                                     self.memory_ui.update(&self.cpu);
 
-                                    self.last_update = std::time::Instant::now();
-                                    ctx.request_repaint_after(std::time::Duration::from_millis(
-                                        100,
-                                    ));
+                                    self.last_update = Instant::now();
+
+                                    ctx.request_repaint_after(Duration::from_millis(10));
                                 }
                                 Err(err) => {
                                     self.editor.status_bar = err.to_string();
@@ -492,7 +491,7 @@ impl eframe::App for App {
                         }
 
                         let elapsed = self.last_update.elapsed();
-                        if self.running && elapsed >= std::time::Duration::from_millis(100) {
+                        if self.running && elapsed >= Duration::from_millis(10) {
                             if let Err(err) = self.cpu.step_forward() {
                                 self.editor.status_bar = match err {
                                     StepError::Halt => {
@@ -508,10 +507,10 @@ impl eframe::App for App {
                             self.register_ui.update(&self.cpu);
                             self.memory_ui.update(&self.cpu);
 
-                            self.last_update = std::time::Instant::now();
-                            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                            self.last_update = Instant::now();
+                            ctx.request_repaint_after(Duration::from_millis(10));
                         } else if self.running {
-                            ctx.request_repaint_after(std::time::Duration::from_millis(100) - elapsed);
+                            ctx.request_repaint_after(Duration::from_millis(10) - elapsed);
                         }
 
                         ui.allocate_space(ui.spacing().item_spacing);

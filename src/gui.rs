@@ -282,7 +282,7 @@ impl<'a> Widget for FlagWidget<'a> {
 
                 self.cpu.execute_op(Operation::Flags(FlagsOperation {
                     old_flags: self.cpu.get_flags(),
-                    new_flags: new_flags,
+                    new_flags,
                 }));
             }
 
@@ -307,7 +307,7 @@ impl<'a> RegisterWidget<'a> {
         register_ui: &'a mut RegisterUIState,
     ) -> Self {
         Self {
-            register: register,
+            register,
             cpu,
             color,
             register_ui,
@@ -380,7 +380,7 @@ impl<'a> Widget for MemoryCellWidget<'a> {
         if response.changed() {
             let value = u8::from_str_radix(self.byte, 16);
 
-            if self.byte != "" && value.is_err() {
+            if !self.byte.is_empty() && value.is_err() {
                 self.byte.clear();
                 self.byte.push_str("00");
             } else {
@@ -433,13 +433,13 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(&ctx, |_ui| {
+        egui::CentralPanel::default().show(ctx, |_ui| {
             let mut running = self.running.lock().unwrap();
             let mut cpu = self.cpu.lock().unwrap();
             egui::Window::new("Editor")
                 .default_width(800.0)
                 .default_height(600.0)
-                .show(&ctx, |ui| {
+                .show(ctx, |ui| {
                     egui::TopBottomPanel::top("Assemble Buttons").show_inside(ui, |ui| {
                         let execute_button = Button::new("▶");
                         const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
@@ -454,7 +454,7 @@ impl eframe::App for App {
                                 Ok(program) => {
                                     for segment in program.segments() {
                                         cpu.load_data(
-                                            &segment.data().as_slice(),
+                                            segment.data().as_slice(),
                                             segment.address(),
                                         );
                                     }
@@ -519,7 +519,7 @@ impl eframe::App for App {
                     });
                     ui.add(EditorWidget::new(&mut self.editor));
                 });
-            egui::Window::new("Registers").show(&ctx, |ui| {
+            egui::Window::new("Registers").show(ctx, |ui| {
                 let mut register_ui = self.register_ui.lock().unwrap();
                 ui.add(RegisterWidget::new(
                     Register::A,
@@ -605,13 +605,13 @@ impl eframe::App for App {
                 });
             });
 
-            egui::Window::new("Memory").show(&ctx, |ui| {
+            egui::Window::new("Memory").show(ctx, |ui| {
                 let mut memory_ui = self.memory_ui.lock().unwrap();
                 ui.horizontal(|ui| {
                     let address_field = TextEdit::singleline(&mut memory_ui.address).char_limit(4);
                     ui.label("Address: ");
                     if ui.add_sized([40.0, 20.0], address_field).changed() {
-                        if memory_ui.address != ""
+                        if !memory_ui.address.is_empty()
                             && u16::from_str_radix(&memory_ui.address, 16).is_err()
                         {
                             memory_ui.address = "0000".to_string();

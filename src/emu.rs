@@ -702,7 +702,7 @@ impl CPU {
             OpCode::Sta => {
                 let address = self.read_double_bytes();
                 let op = Operation::Memory(MemoryOperation {
-                    address: address,
+                    address,
                     old_value: self.cpu_state.get_memory_at(address),
                     new_value: self.cpu_state.get_register(Register::A),
                 });

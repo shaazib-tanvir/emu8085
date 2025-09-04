@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
 use std::fs::read_to_string;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::{num::ParseIntError, path::Path};
 
 use crate::common::{
-    OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, pair_to_u16, u16_to_pair,
+    OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair,
 };
 use thiserror::Error;
 
@@ -1377,7 +1376,7 @@ impl Program {
                 if let Unit::Directive(directive) = intermediate_unit.unit {
                     if let Directive::Org(address) = directive {
                         sections.push(Section {
-                            address: address,
+                            address,
                             units: vec![],
                         });
                     }
@@ -1408,7 +1407,7 @@ impl Program {
                 if let Unit::Directive(directive) = intermediate_unit.unit {
                     if let Directive::Org(address) = directive {
                         sections.push(Section {
-                            address: address,
+                            address,
                             units: vec![],
                         });
                     }

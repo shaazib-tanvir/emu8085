@@ -1,6 +1,7 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
-    sync::{Arc, Mutex},
+    sync::Arc,
+    time::Instant,
 };
 
 use eframe::CreationContext;
@@ -114,7 +115,7 @@ impl From<&CPU> for RegisterUIState {
 
 struct Editor {
     code: String,
-    status_bar: Arc<Mutex<String>>,
+    status_bar: String,
     last_hash: u64,
     galley: Option<Arc<egui::Galley>>,
 }
@@ -125,7 +126,7 @@ impl Editor {
             last_hash: 0,
             galley: None,
             code: "".to_string(),
-            status_bar: Arc::new(Mutex::new("".to_string())),
+            status_bar: "".to_string(),
         }
     }
 }
@@ -394,11 +395,12 @@ impl<'a> Widget for MemoryCellWidget<'a> {
 }
 
 pub struct App {
-    cpu: Arc<Mutex<CPU>>,
-    running: Arc<Mutex<bool>>,
+    cpu: CPU,
+    last_update: Instant,
+    running: bool,
     editor: Editor,
-    register_ui: Arc<Mutex<RegisterUIState>>,
-    memory_ui: Arc<Mutex<MemoryUIState>>,
+    register_ui: RegisterUIState,
+    memory_ui: MemoryUIState,
 }
 
 impl App {
@@ -422,10 +424,11 @@ impl App {
         let memory_ui = MemoryUIState::from(&cpu);
 
         Self {
-            cpu: Arc::new(Mutex::new(cpu)),
-            register_ui: Arc::new(Mutex::new(register_ui)),
-            memory_ui: Arc::new(Mutex::new(memory_ui)),
-            running: Arc::new(Mutex::new(false)),
+            cpu: cpu,
+            register_ui: register_ui,
+            memory_ui: memory_ui,
+            running: false,
+            last_update: std::time::Instant::now(),
             editor: Editor::new(),
         }
     }
@@ -434,8 +437,6 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |_ui| {
-            let mut running = self.running.lock().unwrap();
-            let mut cpu = self.cpu.lock().unwrap();
             egui::Window::new("Editor")
                 .default_width(800.0)
                 .default_height(600.0)
@@ -445,7 +446,7 @@ impl eframe::App for App {
                         const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
                         if ui
-                            .add_enabled(!*running, execute_button)
+                            .add_enabled(!self.running, execute_button)
                             .on_hover_text("Execute")
                             .clicked()
                         {
@@ -453,93 +454,94 @@ impl eframe::App for App {
                             match program {
                                 Ok(program) => {
                                     for segment in program.segments() {
-                                        cpu.load_data(
+                                        self.cpu.load_data(
                                             segment.data().as_slice(),
                                             segment.address(),
                                         );
                                     }
 
-                                    *self.editor.status_bar.lock().unwrap() =
+                                    self.editor.status_bar =
                                         "program started executing".to_string();
-                                    *running = true;
-                                    let entrypoint = program.get_entrypoint();
+                                    self.running = true;
+                                    self.cpu.load_entrypoint(program.get_entrypoint());
 
-                                    let running = self.running.clone();
-                                    let cpu = self.cpu.clone();
-                                    let status_bar = self.editor.status_bar.clone();
-                                    let ctx = ctx.clone();
-                                    let register_ui = self.register_ui.clone();
-                                    let memory_ui = self.memory_ui.clone();
-
-                                    let _ = std::thread::spawn(move || {
-                                        {
-                                            cpu.lock().unwrap().load_entrypoint(entrypoint);
-                                        }
-
-                                        loop {
-                                            let start = std::time::Instant::now();
-                                            {
-                                                let mut cpu = cpu.lock().unwrap();
-                                                if let Err(err) = cpu.step_forward() {
-                                                    *status_bar.lock().unwrap() = match err {
-                                                        StepError::Halt => {
-                                                            *running.lock().unwrap() = false;
-                                                            PROGRAM_DONE_MESSAGE.to_string()
-                                                        }
-                                                        _ => err.to_string(),
-                                                    };
-
-                                                    *running.lock().unwrap() = false;
-                                                    break;
-                                                };
-
-                                                register_ui.lock().unwrap().update(&cpu);
-                                                memory_ui.lock().unwrap().update(&cpu);
-
-                                                ctx.request_repaint();
+                                    if let Err(err) = self.cpu.step_forward() {
+                                        self.editor.status_bar = match err {
+                                            StepError::Halt => {
+                                                self.running = false;
+                                                PROGRAM_DONE_MESSAGE.to_string()
                                             }
+                                            _ => err.to_string(),
+                                        };
 
-                                            if start.elapsed() <= std::time::Duration::from_millis(10) {
-                                                std::thread::sleep(std::time::Duration::from_millis(10) - start.elapsed());
-                                            }
-                                        }
-                                    });
+                                        self.running = false;
+                                    };
+
+                                    self.register_ui.update(&self.cpu);
+                                    self.memory_ui.update(&self.cpu);
+
+                                    self.last_update = std::time::Instant::now();
+                                    ctx.request_repaint_after(std::time::Duration::from_millis(
+                                        100,
+                                    ));
                                 }
                                 Err(err) => {
-                                    *self.editor.status_bar.lock().unwrap() = err.to_string();
+                                    self.editor.status_bar = err.to_string();
                                 }
                             }
+                        }
+
+                        let elapsed = self.last_update.elapsed();
+                        if self.running && elapsed >= std::time::Duration::from_millis(100) {
+                            if let Err(err) = self.cpu.step_forward() {
+                                self.editor.status_bar = match err {
+                                    StepError::Halt => {
+                                        self.running = false;
+                                        PROGRAM_DONE_MESSAGE.to_string()
+                                    }
+                                    _ => err.to_string(),
+                                };
+
+                                self.running = false;
+                            };
+
+                            self.register_ui.update(&self.cpu);
+                            self.memory_ui.update(&self.cpu);
+
+                            self.last_update = std::time::Instant::now();
+                            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                        } else if self.running {
+                            ctx.request_repaint_after(std::time::Duration::from_millis(100) - elapsed);
                         }
 
                         ui.allocate_space(ui.spacing().item_spacing);
                     });
                     egui::TopBottomPanel::bottom("Status Bar Panel").show_inside(ui, |ui| {
                         ui.allocate_space(ui.spacing().item_spacing);
-                        ui.label(self.editor.status_bar.lock().unwrap().to_string());
+                        ui.label(self.editor.status_bar.to_string());
                     });
                     ui.add(EditorWidget::new(&mut self.editor));
                 });
             egui::Window::new("Registers").show(ctx, |ui| {
-                let mut register_ui = self.register_ui.lock().unwrap();
                 ui.add(RegisterWidget::new(
                     Register::A,
                     Color32::from_hex("#a51723").unwrap(),
-                    &mut cpu,
-                    &mut register_ui,
+                    &mut self.cpu,
+                    &mut self.register_ui,
                 ));
 
                 ui.horizontal(|ui| {
                     ui.add(RegisterWidget::new(
                         Register::B,
                         Color32::from_hex("#00822f").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::C,
                         Color32::from_hex("#00822f").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                 });
 
@@ -547,14 +549,14 @@ impl eframe::App for App {
                     ui.add(RegisterWidget::new(
                         Register::D,
                         Color32::from_hex("#0e6bb7").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::E,
                         Color32::from_hex("#0e6bb7").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                 });
 
@@ -562,14 +564,14 @@ impl eframe::App for App {
                     ui.add(RegisterWidget::new(
                         Register::H,
                         Color32::from_hex("#f9d222").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::L,
                         Color32::from_hex("#f9d222").unwrap(),
-                        &mut cpu,
-                        &mut register_ui,
+                        &mut self.cpu,
+                        &mut self.register_ui,
                     ));
                 });
 
@@ -578,46 +580,46 @@ impl eframe::App for App {
                         Flags::SIGN,
                         "S",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut cpu,
-                        &mut register_ui.sign_flag,
+                        &mut self.cpu,
+                        &mut self.register_ui.sign_flag,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::ZERO,
                         "Z",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut cpu,
-                        &mut register_ui.zero_flag,
+                        &mut self.cpu,
+                        &mut self.register_ui.zero_flag,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::PARITY,
                         "P",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut cpu,
-                        &mut register_ui.parity_flag,
+                        &mut self.cpu,
+                        &mut self.register_ui.parity_flag,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::CARRY,
                         "C",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut cpu,
-                        &mut register_ui.carry_flag,
+                        &mut self.cpu,
+                        &mut self.register_ui.carry_flag,
                     ));
                 });
             });
 
             egui::Window::new("Memory").show(ctx, |ui| {
-                let mut memory_ui = self.memory_ui.lock().unwrap();
                 ui.horizontal(|ui| {
-                    let address_field = TextEdit::singleline(&mut memory_ui.address).char_limit(4);
+                    let address_field =
+                        TextEdit::singleline(&mut self.memory_ui.address).char_limit(4);
                     ui.label("Address: ");
                     if ui.add_sized([40.0, 20.0], address_field).changed() {
-                        if !memory_ui.address.is_empty()
-                            && u16::from_str_radix(&memory_ui.address, 16).is_err()
+                        if !self.memory_ui.address.is_empty()
+                            && u16::from_str_radix(&self.memory_ui.address, 16).is_err()
                         {
-                            memory_ui.address = "0000".to_string();
+                            self.memory_ui.address = "0000".to_string();
                         }
 
-                        memory_ui.update(&cpu);
+                        self.memory_ui.update(&self.cpu);
                     }
                 });
                 ui.allocate_space(Vec2::new(0.0, ui.style().spacing.item_spacing.y));
@@ -625,7 +627,7 @@ impl eframe::App for App {
                 egui::Grid::new("Memory Grid").show(ui, |ui| {
                     for i in 0..ROW_COUNT {
                         let base_address =
-                            u16::from_str_radix(&memory_ui.address, 16).unwrap_or_default();
+                            u16::from_str_radix(&self.memory_ui.address, 16).unwrap_or_default();
 
                         ui.label(format!(
                             "{:04x}:",
@@ -635,8 +637,8 @@ impl eframe::App for App {
                             let address = base_address + j as u16;
                             ui.add(MemoryCellWidget::new(
                                 address,
-                                &mut memory_ui.bytes[i][j],
-                                &mut cpu,
+                                &mut self.memory_ui.bytes[i][j],
+                                &mut self.cpu,
                             ));
                         }
                         ui.end_row();

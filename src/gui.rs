@@ -6,7 +6,7 @@ use std::{
 use eframe::CreationContext;
 use egui::{
     Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Response, RichText,
-    TextBuffer, TextEdit, Ui, Vec2, Widget, text::LayoutJob,
+    Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, text::LayoutJob,
 };
 use web_time::{Duration, Instant};
 
@@ -243,6 +243,7 @@ struct FlagWidget<'a> {
     color: Color32,
     cpu: &'a mut CPU,
     flag_value: &'a mut bool,
+    enabled: bool,
 }
 
 impl<'a> FlagWidget<'a> {
@@ -252,6 +253,7 @@ impl<'a> FlagWidget<'a> {
         color: Color32,
         cpu: &'a mut CPU,
         flag_value: &'a mut bool,
+        enabled: bool,
     ) -> Self {
         Self {
             flag,
@@ -259,6 +261,7 @@ impl<'a> FlagWidget<'a> {
             color,
             cpu,
             flag_value,
+            enabled,
         }
     }
 }
@@ -267,15 +270,26 @@ impl<'a> Widget for FlagWidget<'a> {
     fn ui(self, ui: &mut Ui) -> Response {
         ui.vertical(|ui| {
             let text = if *self.flag_value { "1" } else { "0" };
-            let label_button = egui::Button::new(
+            let label_button = Button::new(
                 RichText::new(self.flag_text)
                     .color(Color32::BLACK)
                     .text_style(egui::TextStyle::Body),
             )
             .fill(self.color)
             .sense(egui::Sense::empty());
-            let toggle = ui.toggle_value(self.flag_value, text);
+            let toggle = Button::selectable(*self.flag_value, text).sense(if self.enabled {
+                Sense::click_and_drag()
+            } else {
+                Sense::hover()
+            });
+            let mut toggle = ui.add(toggle);
+            // let toggle = ui.toggle_value(self.flag_value, text);
             ui.add_sized(toggle.rect.size(), label_button);
+
+            if toggle.clicked() {
+                *self.flag_value = !*self.flag_value;
+                toggle.mark_changed();
+            }
 
             if toggle.changed() {
                 let mut new_flags = self.cpu.get_flags();
@@ -298,6 +312,7 @@ struct RegisterWidget<'a> {
     color: Color32,
     cpu: &'a mut CPU,
     register_ui: &'a mut RegisterUIState,
+    enabled: bool,
 }
 
 impl<'a> RegisterWidget<'a> {
@@ -306,12 +321,14 @@ impl<'a> RegisterWidget<'a> {
         color: Color32,
         cpu: &'a mut CPU,
         register_ui: &'a mut RegisterUIState,
+        enabled: bool,
     ) -> Self {
         Self {
             register,
             cpu,
             color,
             register_ui,
+            enabled,
         }
     }
 }
@@ -323,7 +340,8 @@ impl<'a> Widget for RegisterWidget<'a> {
             let text_edit = TextEdit::singleline(register_text)
                 .char_limit(2)
                 .horizontal_align(Align::Center)
-                .vertical_align(Align::Center);
+                .vertical_align(Align::Center)
+                .interactive(self.enabled);
             let label_button = egui::Button::new(
                 RichText::new(format!("{}", self.register))
                     .color(Color32::BLACK)
@@ -362,11 +380,17 @@ struct MemoryCellWidget<'a> {
     address: u16,
     byte: &'a mut String,
     cpu: &'a mut CPU,
+    enabled: bool,
 }
 
 impl<'a> MemoryCellWidget<'a> {
-    fn new(address: u16, byte: &'a mut String, cpu: &'a mut CPU) -> Self {
-        Self { address, byte, cpu }
+    fn new(address: u16, byte: &'a mut String, cpu: &'a mut CPU, enabled: bool) -> Self {
+        Self {
+            address,
+            byte,
+            cpu,
+            enabled,
+        }
     }
 }
 
@@ -375,7 +399,8 @@ impl<'a> Widget for MemoryCellWidget<'a> {
         let text_edit = TextEdit::singleline(self.byte)
             .char_limit(2)
             .horizontal_align(Align::Center)
-            .vertical_align(Align::Center);
+            .vertical_align(Align::Center)
+            .interactive(self.enabled);
         let response = ui.add(text_edit);
 
         if response.changed() {
@@ -398,6 +423,7 @@ pub struct App {
     cpu: CPU,
     last_update: Instant,
     running: bool,
+    paused: bool,
     editor: Editor,
     register_ui: RegisterUIState,
     memory_ui: MemoryUIState,
@@ -407,16 +433,16 @@ impl App {
     pub fn new(creation_context: &CreationContext<'_>) -> Self {
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
-            "SourceCodePro-Regular".to_owned(),
+            "OxygenMono-Regular".to_owned(),
             std::sync::Arc::new(FontData::from_static(include_bytes!(
-                "../assets/SourceCodePro-Regular.ttf"
+                "../assets/OxygenMono-Regular.ttf"
             ))),
         );
         fonts
             .families
             .get_mut(&FontFamily::Proportional)
             .unwrap()
-            .insert(0, "SourceCodePro-Regular".to_owned());
+            .insert(0, "OxygenMono-Regular".to_owned());
         creation_context.egui_ctx.set_fonts(fonts);
 
         let cpu = CPU::new();
@@ -428,6 +454,7 @@ impl App {
             register_ui: register_ui,
             memory_ui: memory_ui,
             running: false,
+            paused: false,
             last_update: Instant::now(),
             editor: Editor::new(),
         }
@@ -442,76 +469,99 @@ impl eframe::App for App {
                 .default_height(600.0)
                 .show(ctx, |ui| {
                     egui::TopBottomPanel::top("Assemble Buttons").show_inside(ui, |ui| {
-                        let execute_button = Button::new("▶");
-                        const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
+                        ui.horizontal(|ui| {
+                            let execute_button = Button::new("▶");
+                            let pause_button = Button::new("⏸");
+                            const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
-                        if ui
-                            .add_enabled(!self.running, execute_button)
-                            .on_hover_text("Execute")
-                            .clicked()
-                        {
-                            let program = AssembledProgram::assemble(&self.editor.code);
-                            match program {
-                                Ok(program) => {
-                                    for segment in program.segments() {
-                                        self.cpu.load_data(
-                                            segment.data().as_slice(),
-                                            segment.address(),
-                                        );
-                                    }
-
-                                    self.editor.status_bar =
-                                        "program started executing".to_string();
-                                    self.running = true;
-                                    self.cpu.load_entrypoint(program.get_entrypoint());
-
-                                    if let Err(err) = self.cpu.step_forward() {
-                                        self.editor.status_bar = match err {
-                                            StepError::Halt => {
-                                                self.running = false;
-                                                PROGRAM_DONE_MESSAGE.to_string()
+                            if ui
+                                .add_enabled(
+                                    !self.running || (self.running && self.paused),
+                                    execute_button,
+                                )
+                                .on_hover_text("Execute")
+                                .clicked()
+                            {
+                                if !self.running {
+                                    let program = AssembledProgram::assemble(&self.editor.code);
+                                    match program {
+                                        Ok(program) => {
+                                            for segment in program.segments() {
+                                                self.cpu.load_data(
+                                                    segment.data().as_slice(),
+                                                    segment.address(),
+                                                );
                                             }
-                                            _ => err.to_string(),
-                                        };
 
-                                        self.running = false;
-                                    };
+                                            self.editor.status_bar =
+                                                "program started executing".to_string();
+                                            self.running = true;
+                                            self.cpu.load_entrypoint(program.get_entrypoint());
 
-                                    self.register_ui.update(&self.cpu);
-                                    self.memory_ui.update(&self.cpu);
+                                            if let Err(err) = self.cpu.step_forward() {
+                                                self.editor.status_bar = match err {
+                                                    StepError::Halt => {
+                                                        self.running = false;
+                                                        PROGRAM_DONE_MESSAGE.to_string()
+                                                    }
+                                                    _ => err.to_string(),
+                                                };
 
-                                    self.last_update = Instant::now();
+                                                self.running = false;
+                                            };
 
+                                            self.register_ui.update(&self.cpu);
+                                            self.memory_ui.update(&self.cpu);
+
+                                            self.last_update = Instant::now();
+
+                                            ctx.request_repaint_after(Duration::from_millis(10));
+                                        }
+                                        Err(err) => {
+                                            self.editor.status_bar = err.to_string();
+                                        }
+                                    }
+                                } else if self.paused {
+                                    self.paused = false;
                                     ctx.request_repaint_after(Duration::from_millis(10));
-                                }
-                                Err(err) => {
-                                    self.editor.status_bar = err.to_string();
+                                    self.editor.status_bar =
+                                        "program continuing execution".to_string();
                                 }
                             }
-                        }
 
-                        let elapsed = self.last_update.elapsed();
-                        if self.running && elapsed >= Duration::from_millis(10) {
-                            if let Err(err) = self.cpu.step_forward() {
-                                self.editor.status_bar = match err {
-                                    StepError::Halt => {
-                                        self.running = false;
-                                        PROGRAM_DONE_MESSAGE.to_string()
-                                    }
-                                    _ => err.to_string(),
+                            if ui
+                                .add_enabled(self.running && !self.paused, pause_button)
+                                .on_hover_text("Pause")
+                                .clicked()
+                            {
+                                self.paused = true;
+                                self.editor.status_bar = "program paused".to_string();
+                            }
+
+                            let elapsed = self.last_update.elapsed();
+                            if self.running && !self.paused && elapsed >= Duration::from_millis(10)
+                            {
+                                if let Err(err) = self.cpu.step_forward() {
+                                    self.editor.status_bar = match err {
+                                        StepError::Halt => {
+                                            self.running = false;
+                                            PROGRAM_DONE_MESSAGE.to_string()
+                                        }
+                                        _ => err.to_string(),
+                                    };
+
+                                    self.running = false;
                                 };
 
-                                self.running = false;
-                            };
+                                self.register_ui.update(&self.cpu);
+                                self.memory_ui.update(&self.cpu);
 
-                            self.register_ui.update(&self.cpu);
-                            self.memory_ui.update(&self.cpu);
-
-                            self.last_update = Instant::now();
-                            ctx.request_repaint_after(Duration::from_millis(10));
-                        } else if self.running {
-                            ctx.request_repaint_after(Duration::from_millis(10) - elapsed);
-                        }
+                                self.last_update = Instant::now();
+                                ctx.request_repaint_after(Duration::from_millis(10));
+                            } else if self.running && !self.paused {
+                                ctx.request_repaint_after(Duration::from_millis(10) - elapsed);
+                            }
+                        });
 
                         ui.allocate_space(ui.spacing().item_spacing);
                     });
@@ -527,6 +577,7 @@ impl eframe::App for App {
                     Color32::from_hex("#a51723").unwrap(),
                     &mut self.cpu,
                     &mut self.register_ui,
+                    !self.running,
                 ));
 
                 ui.horizontal(|ui| {
@@ -535,12 +586,14 @@ impl eframe::App for App {
                         Color32::from_hex("#00822f").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::C,
                         Color32::from_hex("#00822f").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                 });
 
@@ -550,12 +603,14 @@ impl eframe::App for App {
                         Color32::from_hex("#0e6bb7").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::E,
                         Color32::from_hex("#0e6bb7").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                 });
 
@@ -565,12 +620,14 @@ impl eframe::App for App {
                         Color32::from_hex("#f9d222").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::L,
                         Color32::from_hex("#f9d222").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
+                        !self.running,
                     ));
                 });
 
@@ -581,6 +638,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.sign_flag,
+                        !self.running,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::ZERO,
@@ -588,6 +646,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.zero_flag,
+                        !self.running,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::PARITY,
@@ -595,6 +654,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.parity_flag,
+                        !self.running,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::CARRY,
@@ -602,6 +662,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.carry_flag,
+                        !self.running,
                     ));
                 });
             });
@@ -638,6 +699,7 @@ impl eframe::App for App {
                                 address,
                                 &mut self.memory_ui.bytes[i][j],
                                 &mut self.cpu,
+                                !self.running,
                             ));
                         }
                         ui.end_row();

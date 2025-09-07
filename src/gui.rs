@@ -5,12 +5,12 @@ use std::{
 
 use eframe::CreationContext;
 use egui::{
-    text::LayoutJob, Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Label,
-    Response, RichText, Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, WidgetText,
+    Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Label, Response,
+    RichText, Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, WidgetText, text::LayoutJob,
 };
 use web_time::{Duration, Instant};
 
-use crate::emu::{Flags, FlagsOperation, Operation, RegisterOperation, StepError, CPU};
+use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation, StepError};
 use crate::{asm::AssembledProgram, common::Register};
 
 const ROW_COUNT: usize = 4;
@@ -236,30 +236,33 @@ impl<'editor> Widget for EditorWidget<'editor> {
         } else {
             1
         };
-        let code_widget = egui::TextEdit::multiline(&mut editor.code)
-            .interactive(self.enabled)
-            .lock_focus(true)
-            .layouter(&mut layouter);
 
-        ui.with_layout(
-            egui::Layout::left_to_right(Align::Min).with_main_wrap(false),
-            |ui| {
-                ui.vertical(|ui| {
-                    let mut line_number_string = "".to_string();
-                    for line_number in 0..line_count {
-                        line_number_string += &format!("{}\n", line_number);
-                    }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let code_widget = TextEdit::multiline(&mut editor.code)
+                .interactive(self.enabled)
+                .lock_focus(true)
+                .layouter(&mut layouter);
 
-                    ui.add_space(2.0);
-                    let line_number_label = Label::new(WidgetText::RichText(Arc::new(
-                        RichText::new(&line_number_string).size(14.0),
-                    )));
-                    ui.add(line_number_label);
-                });
-                ui.add_sized(ui.available_size(), code_widget)
-            },
-        )
-        .response
+            ui.with_layout(
+                egui::Layout::left_to_right(Align::Min).with_main_wrap(false),
+                |ui| {
+                    ui.vertical(|ui| {
+                        let mut line_number_string = "".to_string();
+                        for line_number in 0..line_count {
+                            line_number_string += &format!("{}\n", line_number);
+                        }
+
+                        ui.add_space(2.0);
+                        let line_number_label = Label::new(WidgetText::RichText(Arc::new(
+                            RichText::new(&line_number_string).size(14.0),
+                        )));
+                        ui.add(line_number_label);
+                    });
+                    ui.add_sized(ui.available_size(), code_widget)
+                },
+            )
+            .response
+        }).inner
     }
 }
 

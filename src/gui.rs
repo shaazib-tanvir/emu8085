@@ -5,12 +5,12 @@ use std::{
 
 use eframe::CreationContext;
 use egui::{
-    Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Response, RichText,
-    Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, text::LayoutJob,
+    text::LayoutJob, Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Label,
+    Response, RichText, Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, WidgetText,
 };
 use web_time::{Duration, Instant};
 
-use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation, StepError};
+use crate::emu::{Flags, FlagsOperation, Operation, RegisterOperation, StepError, CPU};
 use crate::{asm::AssembledProgram, common::Register};
 
 const ROW_COUNT: usize = 4;
@@ -133,11 +133,12 @@ impl Editor {
 
 struct EditorWidget<'editor> {
     editor: &'editor mut Editor,
+    enabled: bool,
 }
 
 impl<'editor> EditorWidget<'editor> {
-    fn new(editor: &'editor mut Editor) -> Self {
-        Self { editor }
+    fn new(editor: &'editor mut Editor, enabled: bool) -> Self {
+        Self { editor, enabled }
     }
 }
 
@@ -229,11 +230,36 @@ impl<'editor> Widget for EditorWidget<'editor> {
             editor.last_hash = hash;
             galley
         };
+
+        let line_count = if !editor.code.is_empty() {
+            editor.code.split("\n").count()
+        } else {
+            1
+        };
         let code_widget = egui::TextEdit::multiline(&mut editor.code)
+            .interactive(self.enabled)
             .lock_focus(true)
             .layouter(&mut layouter);
 
-        ui.add_sized(ui.available_size(), code_widget)
+        ui.with_layout(
+            egui::Layout::left_to_right(Align::Min).with_main_wrap(false),
+            |ui| {
+                ui.vertical(|ui| {
+                    let mut line_number_string = "".to_string();
+                    for line_number in 0..line_count {
+                        line_number_string += &format!("{}\n", line_number);
+                    }
+
+                    ui.add_space(2.0);
+                    let line_number_label = Label::new(WidgetText::RichText(Arc::new(
+                        RichText::new(&line_number_string).size(14.0),
+                    )));
+                    ui.add(line_number_label);
+                });
+                ui.add_sized(ui.available_size(), code_widget)
+            },
+        )
+        .response
     }
 }
 
@@ -433,16 +459,16 @@ impl App {
     pub fn new(creation_context: &CreationContext<'_>) -> Self {
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
-            "OxygenMono-Regular".to_owned(),
+            "SourceCodePro-Regular".to_owned(),
             std::sync::Arc::new(FontData::from_static(include_bytes!(
-                "../assets/OxygenMono-Regular.ttf"
+                "../assets/SourceCodePro-Regular.ttf"
             ))),
         );
         fonts
             .families
             .get_mut(&FontFamily::Proportional)
             .unwrap()
-            .insert(0, "OxygenMono-Regular".to_owned());
+            .insert(0, "SourceCodePro-Regular".to_owned());
         creation_context.egui_ctx.set_fonts(fonts);
 
         let cpu = CPU::new();
@@ -470,16 +496,23 @@ impl eframe::App for App {
                 .show(ctx, |ui| {
                     egui::TopBottomPanel::top("Assemble Buttons").show_inside(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let execute_button = Button::new("▶");
-                            let pause_button = Button::new("⏸");
+                            let execute_button = Button::new(if !self.running || self.paused {
+                                "▶"
+                            } else {
+                                "⏸"
+                            });
+                            let stop_button = Button::new("■");
                             const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
                             if ui
-                                .add_enabled(
-                                    !self.running || (self.running && self.paused),
-                                    execute_button,
-                                )
-                                .on_hover_text("Execute")
+                                .add(execute_button)
+                                .on_hover_text(if !self.running {
+                                    "Execute"
+                                } else if !self.paused {
+                                    "Pause"
+                                } else {
+                                    "Resume"
+                                })
                                 .clicked()
                             {
                                 if !self.running {
@@ -521,21 +554,14 @@ impl eframe::App for App {
                                             self.editor.status_bar = err.to_string();
                                         }
                                     }
-                                } else if self.paused {
+                                } else if !self.paused {
+                                    self.paused = true;
+                                    self.editor.status_bar = "program paused".to_string();
+                                } else {
                                     self.paused = false;
                                     ctx.request_repaint_after(Duration::from_millis(10));
-                                    self.editor.status_bar =
-                                        "program continuing execution".to_string();
+                                    self.editor.status_bar = "program resumed".to_string();
                                 }
-                            }
-
-                            if ui
-                                .add_enabled(self.running && !self.paused, pause_button)
-                                .on_hover_text("Pause")
-                                .clicked()
-                            {
-                                self.paused = true;
-                                self.editor.status_bar = "program paused".to_string();
                             }
 
                             let elapsed = self.last_update.elapsed();
@@ -561,6 +587,16 @@ impl eframe::App for App {
                             } else if self.running && !self.paused {
                                 ctx.request_repaint_after(Duration::from_millis(10) - elapsed);
                             }
+
+                            if ui
+                                .add_enabled(self.running, stop_button)
+                                .on_hover_text("Stop")
+                                .clicked()
+                            {
+                                self.paused = false;
+                                self.running = false;
+                                self.editor.status_bar = "program stopped".to_string();
+                            }
                         });
 
                         ui.allocate_space(ui.spacing().item_spacing);
@@ -569,7 +605,7 @@ impl eframe::App for App {
                         ui.allocate_space(ui.spacing().item_spacing);
                         ui.label(self.editor.status_bar.to_string());
                     });
-                    ui.add(EditorWidget::new(&mut self.editor));
+                    ui.add(EditorWidget::new(&mut self.editor, !self.running));
                 });
             egui::Window::new("Registers").show(ctx, |ui| {
                 ui.add(RegisterWidget::new(
@@ -577,7 +613,7 @@ impl eframe::App for App {
                     Color32::from_hex("#a51723").unwrap(),
                     &mut self.cpu,
                     &mut self.register_ui,
-                    !self.running,
+                    !self.running || self.paused,
                 ));
 
                 ui.horizontal(|ui| {
@@ -586,14 +622,14 @@ impl eframe::App for App {
                         Color32::from_hex("#00822f").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::C,
                         Color32::from_hex("#00822f").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                 });
 
@@ -603,14 +639,14 @@ impl eframe::App for App {
                         Color32::from_hex("#0e6bb7").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::E,
                         Color32::from_hex("#0e6bb7").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                 });
 
@@ -620,14 +656,14 @@ impl eframe::App for App {
                         Color32::from_hex("#f9d222").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::L,
                         Color32::from_hex("#f9d222").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                 });
 
@@ -638,7 +674,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.sign_flag,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::ZERO,
@@ -646,7 +682,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.zero_flag,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::PARITY,
@@ -654,7 +690,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.parity_flag,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::CARRY,
@@ -662,7 +698,7 @@ impl eframe::App for App {
                         Color32::from_hex("#ea7cc4").unwrap(),
                         &mut self.cpu,
                         &mut self.register_ui.carry_flag,
-                        !self.running,
+                        !self.running || self.paused,
                     ));
                 });
             });
@@ -699,7 +735,7 @@ impl eframe::App for App {
                                 address,
                                 &mut self.memory_ui.bytes[i][j],
                                 &mut self.cpu,
-                                !self.running,
+                                !self.running || self.paused,
                             ));
                         }
                         ui.end_row();

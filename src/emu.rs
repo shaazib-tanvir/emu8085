@@ -1,4 +1,6 @@
-use crate::common::{OpCode, OpCodeError, RegisterError, Register,RegisterPair, pair_to_u16, u16_to_pair};
+use crate::common::{
+    pair_to_u16, u16_to_pair, OpCode, OpCodeError, Register, RegisterError, RegisterPair,
+};
 use bitflags::bitflags;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -126,6 +128,13 @@ impl CPUState {
         pair_to_u16([self.registers.c, self.registers.b])
     }
 
+    fn get_address_sp(&self) -> (u16, u16) {
+        (
+            self.registers.stack_pointer,
+            self.registers.stack_pointer + 1,
+        )
+    }
+
     fn get_memory_pc(&self) -> u8 {
         self.memory[self.get_address_pc() as usize]
     }
@@ -133,6 +142,13 @@ impl CPUState {
     fn get_memory_hl(&self) -> u8 {
         let address = pair_to_u16([self.registers.l, self.registers.h]);
         self.get_memory_at(address)
+    }
+
+    fn get_memory_sp(&self) -> u16 {
+        let low = self.get_memory_at(self.registers.stack_pointer);
+        let high = self.get_memory_at(self.registers.stack_pointer + 1);
+
+        pair_to_u16([low, high])
     }
 
     fn get_memory_at(&self, address: u16) -> u8 {
@@ -900,7 +916,8 @@ impl CPU {
             OpCode::Rlc => {
                 let shift_op = Operation::Register(RegisterOperation {
                     old_value: self.cpu_state.get_register(Register::A),
-                    new_value: self.cpu_state.get_register(Register::A) << (1 + (self.cpu_state.get_register(Register::A) & 0b10000000 != 0) as u8),
+                    new_value: self.cpu_state.get_register(Register::A)
+                        << (1 + (self.cpu_state.get_register(Register::A) & 0b10000000 != 0) as u8),
                     register: Register::A,
                 });
 
@@ -922,9 +939,11 @@ impl CPU {
             OpCode::Rrc => {
                 let shift_op = Operation::Register(RegisterOperation {
                     old_value: self.cpu_state.get_register(Register::A),
-                    new_value: self.cpu_state.get_register(Register::A) >> (1 + (((self.cpu_state.get_register(Register::A) & 0b00000001 != 0)
-                            as u8)
-                            << 7)),
+                    new_value: self.cpu_state.get_register(Register::A)
+                        >> (1
+                            + (((self.cpu_state.get_register(Register::A) & 0b00000001 != 0)
+                                as u8)
+                                << 7)),
                     register: Register::A,
                 });
 
@@ -1332,6 +1351,118 @@ impl CPU {
 
                 self.cpu_state.execute_op(op);
                 self.push_command(op);
+            }
+            OpCode::PushB | OpCode::PushD | OpCode::PushH => {
+                let source = instruction & 0b00110000;
+                let source_rp = RegisterPair::try_from(source);
+
+                if source_rp.is_err() {
+                    return Err(StepError::RegisterPairError(source));
+                }
+
+                let source_rp = source_rp.unwrap();
+
+                let mem_lb_op = Operation::Memory(MemoryOperation {
+                    address: self.cpu_state.get_address_sp().0,
+                    old_value: u16_to_pair(self.cpu_state.get_memory_sp())[0],
+                    new_value: u16_to_pair(self.cpu_state.get_register_pair(source_rp))[0],
+                });
+                let mem_hb_op = Operation::Memory(MemoryOperation {
+                    address: self.cpu_state.get_address_sp().1,
+                    old_value: u16_to_pair(self.cpu_state.get_memory_sp())[1],
+                    new_value: u16_to_pair(self.cpu_state.get_register_pair(source_rp))[1],
+                });
+
+                self.cpu_state.execute_op(mem_lb_op);
+                self.cpu_state.execute_op(mem_hb_op);
+                self.push_command(mem_lb_op);
+                self.push_command(mem_hb_op);
+
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) - 2,
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
+            }
+            OpCode::PushPSW => {
+                let destination = instruction & 0b00110000;
+
+                if destination != 0b11 {
+                    return Err(StepError::RegisterPairError(destination));
+                }
+
+                let [new_flags, new_a] = u16_to_pair(self.cpu_state.get_memory_sp());
+
+                let a_op = Operation::Register(RegisterOperation {
+                    old_value: self.cpu_state.get_register(Register::A),
+                    new_value: new_a,
+                    register: Register::A,
+                });
+                let flags_op = Operation::Flags(FlagsOperation {
+                    old_flags: self.cpu_state.get_flags(),
+                    new_flags: Flags::from_bits_truncate(new_flags),
+                });
+
+                self.cpu_state.execute_op(a_op);
+                self.cpu_state.execute_op(flags_op);
+                self.push_command(a_op);
+                self.push_command(flags_op);
+
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) + 2,
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
+            }
+            OpCode::PopB | OpCode::PopD | OpCode::PopH => {
+                let destination = instruction & 0b00110000;
+                let destination_rp = RegisterPair::try_from(destination);
+
+                if destination_rp.is_err() {
+                    return Err(StepError::RegisterPairError(destination));
+                }
+
+                let destination_rp = destination_rp.unwrap();
+                let rp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(destination_rp),
+                    new_value: self.cpu_state.get_memory_sp(),
+                    register: destination_rp,
+                });
+
+                self.cpu_state.execute_op(rp_op);
+                self.push_command(rp_op);
+
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) + 2,
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
+            }
+            OpCode::Xthl => {
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                    register: RegisterPair::SP,
+                });
+                let hl_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    register: RegisterPair::HL,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.cpu_state.execute_op(hl_op);
+                self.push_command(sp_op);
+                self.push_command(hl_op);
             }
             OpCode::Jmp => {
                 self.push_jmp();

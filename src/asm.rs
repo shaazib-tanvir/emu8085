@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::io::Write;
 use std::{num::ParseIntError, path::Path};
 
-use crate::common::{
-    OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair,
-};
+use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair};
 use thiserror::Error;
 
 #[cfg(test)]
@@ -183,7 +180,16 @@ hlt";
         let assembled_program = assembled_program.unwrap();
 
         assert_eq!(assembled_program.segments.get(0).unwrap().address, 0x2050);
-        assert_eq!(*assembled_program.segments.get(0).unwrap().data.get(0).unwrap(), 0xff);
+        assert_eq!(
+            *assembled_program
+                .segments
+                .get(0)
+                .unwrap()
+                .data
+                .get(0)
+                .unwrap(),
+            0xff
+        );
     }
 }
 
@@ -578,6 +584,45 @@ impl Instruction {
                     opcode: OpCode::Xchg,
                 }))
             }
+            "push" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_rp(&operands)?;
+                let opcode = 0b11000101 + (value as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "pop" => {
+                if operands.is_none() {
+                    return Err(InstructionError::OperandParse(
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
+                    ));
+                }
+
+                let operands = operands.unwrap();
+                let value = parse_rp(&operands)?;
+                let opcode = 0b11000001 + (value as u8);
+                let opcode = OpCode::try_from(opcode).unwrap();
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
+            "xthl" => {
+                if operands.is_some() {
+                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
+                }
+                let opcode = OpCode::Xthl;
+                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+            }
             "jmp" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
@@ -941,10 +986,10 @@ impl Instruction {
             "cmp" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
-                            OperandParseError::InsufficientOperands {
-                                expected: 1,
-                                got: 0,
-                            },
+                        OperandParseError::InsufficientOperands {
+                            expected: 1,
+                            got: 0,
+                        },
                     ));
                 }
 
@@ -1417,7 +1462,6 @@ impl Program {
                 let section = sections.last_mut().unwrap();
                 let unit_address = intermediate_unit.address;
                 section.units.push(intermediate_unit);
-
 
                 if last_label.is_some() {
                     label_table.insert(last_label.unwrap().to_string(), unit_address);

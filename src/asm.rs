@@ -596,7 +596,7 @@ impl Instruction {
 
                 let operands = operands.unwrap();
                 let value = parse_rp(&operands)?;
-                let opcode = 0b11000101 + (value as u8);
+                let opcode = 0b11000101 + ((value as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
                 Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
@@ -612,7 +612,7 @@ impl Instruction {
 
                 let operands = operands.unwrap();
                 let value = parse_rp(&operands)?;
-                let opcode = 0b11000001 + (value as u8);
+                let opcode = 0b11000001 + ((value as u8) << 4);
                 let opcode = OpCode::try_from(opcode).unwrap();
                 Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }

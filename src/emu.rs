@@ -131,7 +131,7 @@ impl CPUState {
     fn get_address_sp(&self) -> (u16, u16) {
         (
             self.registers.stack_pointer,
-            self.registers.stack_pointer + 1,
+            self.registers.stack_pointer.wrapping_add(1),
         )
     }
 
@@ -146,7 +146,7 @@ impl CPUState {
 
     fn get_memory_sp(&self) -> u16 {
         let low = self.get_memory_at(self.registers.stack_pointer);
-        let high = self.get_memory_at(self.registers.stack_pointer + 1);
+        let high = self.get_memory_at(self.registers.stack_pointer.wrapping_add(1));
 
         pair_to_u16([low, high])
     }
@@ -523,7 +523,7 @@ impl CPU {
     pub fn step_forward(&mut self) -> Result<(), StepError> {
         let instruction = self.read_byte();
         let opcode = OpCode::try_from(instruction)?;
-
+        
         match opcode {
             OpCode::Nop => {}
             OpCode::MovAA
@@ -1353,12 +1353,21 @@ impl CPU {
                 self.push_command(op);
             }
             OpCode::PushB | OpCode::PushD | OpCode::PushH => {
-                let source = instruction & 0b00110000;
+                let source = (instruction & 0b00110000) >> 4;
                 let source_rp = RegisterPair::try_from(source);
 
                 if source_rp.is_err() {
                     return Err(StepError::RegisterPairError(source));
                 }
+
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_sub(2),
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
 
                 let source_rp = source_rp.unwrap();
 
@@ -1377,18 +1386,9 @@ impl CPU {
                 self.cpu_state.execute_op(mem_hb_op);
                 self.push_command(mem_lb_op);
                 self.push_command(mem_hb_op);
-
-                let sp_op = Operation::RegisterPair(RegisterPairOperation {
-                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) - 2,
-                    register: RegisterPair::SP,
-                });
-
-                self.cpu_state.execute_op(sp_op);
-                self.push_command(sp_op);
             }
             OpCode::PushPSW => {
-                let destination = instruction & 0b00110000;
+                let destination = (instruction & 0b00110000) >> 4;
 
                 if destination != 0b11 {
                     return Err(StepError::RegisterPairError(destination));
@@ -1413,7 +1413,7 @@ impl CPU {
 
                 let sp_op = Operation::RegisterPair(RegisterPairOperation {
                     old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) + 2,
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_add(2),
                     register: RegisterPair::SP,
                 });
 
@@ -1421,7 +1421,7 @@ impl CPU {
                 self.push_command(sp_op);
             }
             OpCode::PopB | OpCode::PopD | OpCode::PopH => {
-                let destination = instruction & 0b00110000;
+                let destination = (instruction & 0b00110000) >> 4;
                 let destination_rp = RegisterPair::try_from(destination);
 
                 if destination_rp.is_err() {
@@ -1440,7 +1440,7 @@ impl CPU {
 
                 let sp_op = Operation::RegisterPair(RegisterPairOperation {
                     old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP) + 2,
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_add(2),
                     register: RegisterPair::SP,
                 });
 
@@ -1448,20 +1448,28 @@ impl CPU {
                 self.push_command(sp_op);
             }
             OpCode::Xthl => {
-                let sp_op = Operation::RegisterPair(RegisterPairOperation {
-                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::HL),
-                    register: RegisterPair::SP,
-                });
                 let hl_op = Operation::RegisterPair(RegisterPairOperation {
                     old_value: self.cpu_state.get_register_pair(RegisterPair::HL),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_memory_sp(),
                     register: RegisterPair::HL,
                 });
 
-                self.cpu_state.execute_op(sp_op);
+                let mem_lb_op = Operation::Memory(MemoryOperation {
+                    address: self.cpu_state.get_address_sp().0,
+                    old_value: u16_to_pair(self.cpu_state.get_memory_sp())[0],
+                    new_value: u16_to_pair(self.cpu_state.get_register_pair(RegisterPair::HL))[0],
+                });
+                let mem_hb_op = Operation::Memory(MemoryOperation {
+                    address: self.cpu_state.get_address_sp().1,
+                    old_value: u16_to_pair(self.cpu_state.get_memory_sp())[1],
+                    new_value: u16_to_pair(self.cpu_state.get_register_pair(RegisterPair::HL))[1],
+                });
+
+                self.cpu_state.execute_op(mem_lb_op);
+                self.cpu_state.execute_op(mem_hb_op);
                 self.cpu_state.execute_op(hl_op);
-                self.push_command(sp_op);
+                self.push_command(mem_lb_op);
+                self.push_command(mem_hb_op);
                 self.push_command(hl_op);
             }
             OpCode::Jmp => {

@@ -1,6 +1,8 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 
 use eframe::CreationContext;
@@ -8,13 +10,49 @@ use egui::{
     Align, Button, Color32, FontData, FontDefinitions, FontFamily, FontId, Label, Response,
     RichText, Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, WidgetText, text::LayoutJob,
 };
-use web_time::{Duration, Instant};
 
 use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation, StepError};
 use crate::{asm::AssembledProgram, common::Register};
 
 const ROW_COUNT: usize = 4;
 const COLUMN_COUNT: usize = 0x10;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_nibble() {
+        assert_eq!(nibble_to_hex_digit(10), b'a');
+        assert_eq!(nibble_to_hex_digit(11), b'b');
+        assert_eq!(nibble_to_hex_digit(12), b'c');
+        assert_eq!(nibble_to_hex_digit(13), b'd');
+        assert_eq!(nibble_to_hex_digit(14), b'e');
+        assert_eq!(nibble_to_hex_digit(15), b'f');
+    }
+}
+
+#[inline]
+fn nibble_to_hex_digit(nibble: u8) -> u8 {
+    if nibble < 10 {
+        b'0' + nibble
+    } else {
+        b'a' + nibble - 10
+    }
+}
+
+#[inline]
+unsafe fn byte_to_hex(string: &mut str, value: u8) {
+    let mut value = value;
+    let lb = nibble_to_hex_digit(value % 16);
+    value /= 16;
+    let hb = nibble_to_hex_digit(value % 16);
+    unsafe {
+        let string = string.as_bytes_mut();
+        string[0] = hb;
+        string[1] = lb;
+    }
+}
 
 struct MemoryUIState {
     address: String,
@@ -27,7 +65,9 @@ impl MemoryUIState {
             for j in 0..COLUMN_COUNT {
                 let k = (j + i * COLUMN_COUNT) as u16
                     + u16::from_str_radix(&self.address, 16).unwrap_or_default();
-                self.bytes[i][j] = format!("{:02x}", cpu.get_memory_at(k));
+                unsafe {
+                    byte_to_hex(&mut self.bytes[i][j], cpu.get_memory_at(k));
+                }
             }
         }
     }
@@ -79,13 +119,15 @@ impl RegisterUIState {
     }
 
     fn update(&mut self, cpu: &CPU) {
-        self.a = format!("{:02x}", cpu.get_register(Register::A));
-        self.b = format!("{:02x}", cpu.get_register(Register::B));
-        self.c = format!("{:02x}", cpu.get_register(Register::C));
-        self.d = format!("{:02x}", cpu.get_register(Register::D));
-        self.e = format!("{:02x}", cpu.get_register(Register::E));
-        self.h = format!("{:02x}", cpu.get_register(Register::H));
-        self.l = format!("{:02x}", cpu.get_register(Register::L));
+        unsafe {
+            byte_to_hex(&mut self.a, cpu.get_register(Register::A));
+            byte_to_hex(&mut self.b, cpu.get_register(Register::B));
+            byte_to_hex(&mut self.c, cpu.get_register(Register::C));
+            byte_to_hex(&mut self.d, cpu.get_register(Register::D));
+            byte_to_hex(&mut self.e, cpu.get_register(Register::E));
+            byte_to_hex(&mut self.h, cpu.get_register(Register::H));
+            byte_to_hex(&mut self.l, cpu.get_register(Register::L));
+        }
         self.carry_flag = cpu.get_flags().contains(Flags::CARRY);
         self.parity_flag = cpu.get_flags().contains(Flags::PARITY);
         self.auxiliary_carry_flag = cpu.get_flags().contains(Flags::AUXILIARY_CARRY);
@@ -115,7 +157,7 @@ impl From<&CPU> for RegisterUIState {
 
 struct Editor {
     code: String,
-    status_bar: String,
+    status_bar: Arc<Mutex<String>>,
     last_hash: u64,
     galley: Option<Arc<egui::Galley>>,
 }
@@ -126,7 +168,7 @@ impl Editor {
             last_hash: 0,
             galley: None,
             code: "".to_string(),
-            status_bar: "".to_string(),
+            status_bar: Arc::new(Mutex::new("".to_string())),
         }
     }
 }
@@ -237,32 +279,34 @@ impl<'editor> Widget for EditorWidget<'editor> {
             1
         };
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let code_widget = TextEdit::multiline(&mut editor.code)
-                .interactive(self.enabled)
-                .lock_focus(true)
-                .layouter(&mut layouter);
+        egui::ScrollArea::vertical()
+            .show(ui, |ui| {
+                let code_widget = TextEdit::multiline(&mut editor.code)
+                    .interactive(self.enabled)
+                    .lock_focus(true)
+                    .layouter(&mut layouter);
 
-            ui.with_layout(
-                egui::Layout::left_to_right(Align::Min).with_main_wrap(false),
-                |ui| {
-                    ui.vertical(|ui| {
-                        let mut line_number_string = "".to_string();
-                        for line_number in 0..line_count {
-                            line_number_string += &format!("{}\n", line_number);
-                        }
+                ui.with_layout(
+                    egui::Layout::left_to_right(Align::Min).with_main_wrap(false),
+                    |ui| {
+                        ui.vertical(|ui| {
+                            let mut line_number_string = "".to_string();
+                            for line_number in 0..line_count {
+                                line_number_string += &format!("{}\n", line_number);
+                            }
 
-                        ui.add_space(2.0);
-                        let line_number_label = Label::new(WidgetText::RichText(Arc::new(
-                            RichText::new(&line_number_string).size(14.0),
-                        )));
-                        ui.add(line_number_label);
-                    });
-                    ui.add_sized(ui.available_size(), code_widget)
-                },
-            )
-            .response
-        }).inner
+                            ui.add_space(2.0);
+                            let line_number_label = Label::new(WidgetText::RichText(Arc::new(
+                                RichText::new(&line_number_string).size(14.0),
+                            )));
+                            ui.add(line_number_label);
+                        });
+                        ui.add_sized(ui.available_size(), code_widget)
+                    },
+                )
+                .response
+            })
+            .inner
     }
 }
 
@@ -449,13 +493,13 @@ impl<'a> Widget for MemoryCellWidget<'a> {
 }
 
 pub struct App {
-    cpu: CPU,
-    last_update: Instant,
-    running: bool,
-    paused: bool,
+    cpu: Arc<Mutex<CPU>>,
+    running: Arc<(Mutex<bool>, Condvar)>,
+    paused: Arc<(Mutex<bool>, Condvar)>,
     editor: Editor,
     register_ui: RegisterUIState,
     memory_ui: MemoryUIState,
+    duration: Arc<Mutex<u128>>,
 }
 
 impl App {
@@ -479,19 +523,22 @@ impl App {
         let memory_ui = MemoryUIState::from(&cpu);
 
         Self {
-            cpu: cpu,
+            cpu: Arc::new(Mutex::new(cpu)),
             register_ui: register_ui,
             memory_ui: memory_ui,
-            running: false,
-            paused: false,
-            last_update: Instant::now(),
+            running: Arc::new((Mutex::new(false), Condvar::new())),
+            paused: Arc::new((Mutex::new(false), Condvar::new())),
             editor: Editor::new(),
+            duration: Arc::new(Mutex::new(0)),
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut cpu = self.cpu.lock().unwrap();
+        let running = *self.running.0.lock().unwrap();
+        let paused = *self.paused.0.lock().unwrap();
         egui::CentralPanel::default().show(ctx, |_ui| {
             egui::Window::new("Editor")
                 .default_width(800.0)
@@ -499,106 +546,144 @@ impl eframe::App for App {
                 .show(ctx, |ui| {
                     egui::TopBottomPanel::top("Assemble Buttons").show_inside(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let execute_button = Button::new(if !self.running || self.paused {
-                                "▶"
-                            } else {
-                                "⏸"
-                            });
+                            let execute_button =
+                                Button::new(if !running || paused { "▶" } else { "⏸" });
                             let stop_button = Button::new("■");
                             const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
                             if ui
                                 .add(execute_button)
-                                .on_hover_text(if !self.running {
+                                .on_hover_text(if !running {
                                     "Execute"
-                                } else if !self.paused {
+                                } else if !paused {
                                     "Pause"
                                 } else {
                                     "Resume"
                                 })
                                 .clicked()
                             {
-                                if !self.running {
+                                if !running {
                                     let program = AssembledProgram::assemble(&self.editor.code);
                                     match program {
                                         Ok(program) => {
                                             for segment in program.segments() {
-                                                self.cpu.load_data(
+                                                cpu.load_data(
                                                     segment.data().as_slice(),
                                                     segment.address(),
                                                 );
                                             }
+                                            cpu.load_entrypoint(program.get_entrypoint());
 
-                                            self.editor.status_bar =
+                                            *self.editor.status_bar.lock().unwrap() =
                                                 "program started executing".to_string();
-                                            self.running = true;
-                                            self.cpu.load_entrypoint(program.get_entrypoint());
 
-                                            if let Err(err) = self.cpu.step_forward() {
-                                                self.editor.status_bar = match err {
-                                                    StepError::Halt => {
-                                                        self.running = false;
-                                                        PROGRAM_DONE_MESSAGE.to_string()
+                                            let running = self.running.clone();
+                                            let mut running = running.0.lock().unwrap();
+                                            *running = true;
+                                            self.running.1.notify_one();
+
+                                            let paused = self.paused.clone();
+                                            let cpu = self.cpu.clone();
+                                            let running = self.running.clone();
+                                            let status_bar = self.editor.status_bar.clone();
+                                            let duration = self.duration.clone();
+
+                                            let ctx = ctx.clone();
+                                            thread::spawn(move || {
+                                                {
+                                                    if *paused.0.lock().unwrap() {
+                                                        let _guard = paused
+                                                            .1
+                                                            .wait_while(
+                                                                paused.0.lock().unwrap(),
+                                                                |condition| *condition,
+                                                            )
+                                                            .unwrap();
                                                     }
-                                                    _ => err.to_string(),
-                                                };
+                                                }
 
-                                                self.running = false;
-                                            };
+                                                loop {
+                                                    {
+                                                        if !*running.0.lock().unwrap() {
+                                                            break;
+                                                        }
+                                                    }
+                                                    {
+                                                        if *paused.0.lock().unwrap() {
+                                                            let _guard = paused
+                                                                .1
+                                                                .wait_while(
+                                                                    paused.0.lock().unwrap(),
+                                                                    |condition| *condition,
+                                                                )
+                                                                .unwrap();
+                                                        }
+                                                    }
 
-                                            self.register_ui.update(&self.cpu);
-                                            self.memory_ui.update(&self.cpu);
+                                                    let old = Instant::now();
+                                                    let mut cpu = cpu.lock().unwrap();
+                                                    if let Err(err) = cpu.step_forward() {
+                                                        match err {
+                                                            StepError::Halt => {
+                                                                *running.0.lock().unwrap() = false;
+                                                                running.1.notify_one();
 
-                                            self.last_update = Instant::now();
+                                                                *status_bar.lock().unwrap() =
+                                                                    PROGRAM_DONE_MESSAGE
+                                                                        .to_string();
+                                                                ctx.request_repaint();
+                                                                break;
+                                                            }
+                                                            _ => {
+                                                                *status_bar.lock().unwrap() =
+                                                                    err.to_string();
+                                                            }
+                                                        };
+                                                    };
 
-                                            ctx.request_repaint_after(Duration::from_millis(10));
+                                                    ctx.request_repaint();
+                                                    let elapsed = Instant::now() - old;
+                                                    *duration.lock().unwrap() = elapsed.as_nanos();
+                                                }
+                                            });
                                         }
                                         Err(err) => {
-                                            self.editor.status_bar = err.to_string();
+                                            *self.editor.status_bar.lock().unwrap() =
+                                                err.to_string();
                                         }
                                     }
-                                } else if !self.paused {
-                                    self.paused = true;
-                                    self.editor.status_bar = "program paused".to_string();
+                                } else if !paused {
+                                    let paused = self.paused.clone();
+                                    *paused.0.lock().unwrap() = true;
+                                    self.paused.1.notify_one();
+
+                                    *self.editor.status_bar.lock().unwrap() =
+                                        "program paused".to_string();
                                 } else {
-                                    self.paused = false;
+                                    let paused = self.paused.clone();
+                                    *paused.0.lock().unwrap() = false;
+                                    self.paused.1.notify_one();
+
                                     ctx.request_repaint_after(Duration::from_millis(10));
-                                    self.editor.status_bar = "program resumed".to_string();
+                                    *self.editor.status_bar.lock().unwrap() =
+                                        "program resumed".to_string();
                                 }
                             }
 
-                            let elapsed = self.last_update.elapsed();
-                            if self.running && !self.paused && elapsed >= Duration::from_millis(10)
-                            {
-                                if let Err(err) = self.cpu.step_forward() {
-                                    self.editor.status_bar = match err {
-                                        StepError::Halt => {
-                                            self.running = false;
-                                            PROGRAM_DONE_MESSAGE.to_string()
-                                        }
-                                        _ => err.to_string(),
-                                    };
-
-                                    self.running = false;
-                                };
-
-                                self.register_ui.update(&self.cpu);
-                                self.memory_ui.update(&self.cpu);
-
-                                self.last_update = Instant::now();
-                                ctx.request_repaint_after(Duration::from_millis(10));
-                            } else if self.running && !self.paused {
-                                ctx.request_repaint_after(Duration::from_millis(10) - elapsed);
-                            }
-
                             if ui
-                                .add_enabled(self.running, stop_button)
+                                .add_enabled(running, stop_button)
                                 .on_hover_text("Stop")
                                 .clicked()
                             {
-                                self.paused = false;
-                                self.running = false;
-                                self.editor.status_bar = "program stopped".to_string();
+                                let paused = self.paused.clone();
+                                let running = self.running.clone();
+                                *paused.0.lock().unwrap() = false;
+                                paused.1.notify_one();
+                                *running.0.lock().unwrap() = false;
+                                running.1.notify_one();
+
+                                *self.editor.status_bar.lock().unwrap() =
+                                    "program stopped".to_string();
                             }
                         });
 
@@ -606,33 +691,36 @@ impl eframe::App for App {
                     });
                     egui::TopBottomPanel::bottom("Status Bar Panel").show_inside(ui, |ui| {
                         ui.allocate_space(ui.spacing().item_spacing);
-                        ui.label(self.editor.status_bar.to_string());
+                        ui.label(format!("{}", self.duration.lock().unwrap()));
+                        ui.label(self.editor.status_bar.lock().unwrap().to_string());
                     });
-                    ui.add(EditorWidget::new(&mut self.editor, !self.running));
+                    ui.add(EditorWidget::new(&mut self.editor, !running));
                 });
             egui::Window::new("Registers").show(ctx, |ui| {
+                let mut register_ui = &mut self.register_ui;
+                register_ui.update(&cpu);
                 ui.add(RegisterWidget::new(
                     Register::A,
                     Color32::from_hex("#a51723").unwrap(),
-                    &mut self.cpu,
-                    &mut self.register_ui,
-                    !self.running || self.paused,
+                    &mut cpu,
+                    &mut register_ui,
+                    !running || paused,
                 ));
 
                 ui.horizontal(|ui| {
                     ui.add(RegisterWidget::new(
                         Register::B,
                         Color32::from_hex("#00822f").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::C,
                         Color32::from_hex("#00822f").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                 });
 
@@ -640,16 +728,16 @@ impl eframe::App for App {
                     ui.add(RegisterWidget::new(
                         Register::D,
                         Color32::from_hex("#0e6bb7").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::E,
                         Color32::from_hex("#0e6bb7").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                 });
 
@@ -657,16 +745,16 @@ impl eframe::App for App {
                     ui.add(RegisterWidget::new(
                         Register::H,
                         Color32::from_hex("#f9d222").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                     ui.add(RegisterWidget::new(
                         Register::L,
                         Color32::from_hex("#f9d222").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui,
+                        !running || paused,
                     ));
                 });
 
@@ -675,50 +763,51 @@ impl eframe::App for App {
                         Flags::SIGN,
                         "S",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui.sign_flag,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui.sign_flag,
+                        !running || paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::ZERO,
                         "Z",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui.zero_flag,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui.zero_flag,
+                        !running || paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::PARITY,
                         "P",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui.parity_flag,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui.parity_flag,
+                        !running || paused,
                     ));
                     ui.add(FlagWidget::new(
                         Flags::CARRY,
                         "C",
                         Color32::from_hex("#ea7cc4").unwrap(),
-                        &mut self.cpu,
-                        &mut self.register_ui.carry_flag,
-                        !self.running || self.paused,
+                        &mut cpu,
+                        &mut register_ui.carry_flag,
+                        !running || paused,
                     ));
                 });
             });
 
             egui::Window::new("Memory").show(ctx, |ui| {
+                let memory_ui = &mut self.memory_ui;
+                memory_ui.update(&mut cpu);
                 ui.horizontal(|ui| {
-                    let address_field =
-                        TextEdit::singleline(&mut self.memory_ui.address).char_limit(4);
+                    let address_field = TextEdit::singleline(&mut memory_ui.address).char_limit(4);
                     ui.label("Address: ");
                     if ui.add_sized([40.0, 20.0], address_field).changed() {
-                        if !self.memory_ui.address.is_empty()
-                            && u16::from_str_radix(&self.memory_ui.address, 16).is_err()
+                        if !memory_ui.address.is_empty()
+                            && u16::from_str_radix(&memory_ui.address, 16).is_err()
                         {
-                            self.memory_ui.address = "0000".to_string();
+                            memory_ui.address = "0000".to_string();
                         }
 
-                        self.memory_ui.update(&self.cpu);
+                        memory_ui.update(&cpu);
                     }
                 });
                 ui.allocate_space(Vec2::new(0.0, ui.style().spacing.item_spacing.y));
@@ -726,7 +815,7 @@ impl eframe::App for App {
                 egui::Grid::new("Memory Grid").show(ui, |ui| {
                     for i in 0..ROW_COUNT {
                         let base_address =
-                            u16::from_str_radix(&self.memory_ui.address, 16).unwrap_or_default();
+                            u16::from_str_radix(&memory_ui.address, 16).unwrap_or_default();
 
                         ui.label(format!(
                             "{:04x}:",
@@ -736,9 +825,9 @@ impl eframe::App for App {
                             let address = base_address + j as u16;
                             ui.add(MemoryCellWidget::new(
                                 address,
-                                &mut self.memory_ui.bytes[i][j],
-                                &mut self.cpu,
-                                !self.running || self.paused,
+                                &mut memory_ui.bytes[i][j],
+                                &mut cpu,
+                                !running || paused,
                             ));
                         }
                         ui.end_row();

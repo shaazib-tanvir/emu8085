@@ -363,6 +363,29 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
+    fn pop_pc(&mut self) {
+        let rp_op = Operation::RegisterPair(RegisterPairOperation {
+            old_value: self.cpu_state.get_register_pair(RegisterPair::PC),
+            new_value: self.cpu_state.get_memory_sp(),
+            register: RegisterPair::PC,
+        });
+
+        self.cpu_state.execute_op(rp_op);
+        self.push_command(rp_op);
+
+        let sp_op = Operation::RegisterPair(RegisterPairOperation {
+            old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+            new_value: self
+                .cpu_state
+                .get_register_pair(RegisterPair::SP)
+                .wrapping_add(2),
+            register: RegisterPair::SP,
+        });
+
+        self.cpu_state.execute_op(sp_op);
+        self.push_command(sp_op);
+    }
+
     fn push_pc(&mut self) {
         let sp_op = Operation::RegisterPair(RegisterPairOperation {
             old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
@@ -1688,6 +1711,65 @@ impl CPU {
                 self.push_pc();
                 if self.get_flags().contains(Flags::PARITY) {
                     self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Ret => {
+                self.pop_pc();
+            }
+            OpCode::Rc => {
+                if self.get_flags().contains(Flags::CARRY) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rnc => {
+                if !self.get_flags().contains(Flags::CARRY) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rz => {
+                if self.get_flags().contains(Flags::ZERO) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rnz => {
+                if !self.get_flags().contains(Flags::ZERO) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rp => {
+                if !self.get_flags().contains(Flags::SIGN) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rm => {
+                if self.get_flags().contains(Flags::SIGN) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rpo => {
+                if !self.get_flags().contains(Flags::PARITY) {
+                    self.pop_pc();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Rpe => {
+                if self.get_flags().contains(Flags::PARITY) {
+                    self.pop_pc();
                 } else {
                     _ = self.read_double_bytes();
                 }

@@ -363,6 +363,36 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
+    fn push_pc(&mut self) {
+        let sp_op = Operation::RegisterPair(RegisterPairOperation {
+            old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+            new_value: self
+                .cpu_state
+                .get_register_pair(RegisterPair::SP)
+                .wrapping_sub(2),
+            register: RegisterPair::SP,
+        });
+
+        self.cpu_state.execute_op(sp_op);
+        self.push_command(sp_op);
+
+        let mem_lb_op = Operation::Memory(MemoryOperation {
+            address: self.cpu_state.get_address_sp().0,
+            old_value: u16_to_pair(self.cpu_state.get_memory_sp())[0],
+            new_value: u16_to_pair(self.cpu_state.get_register_pair(RegisterPair::PC))[0],
+        });
+        let mem_hb_op = Operation::Memory(MemoryOperation {
+            address: self.cpu_state.get_address_sp().1,
+            old_value: u16_to_pair(self.cpu_state.get_memory_sp())[1],
+            new_value: u16_to_pair(self.cpu_state.get_register_pair(RegisterPair::PC))[1],
+        });
+
+        self.cpu_state.execute_op(mem_lb_op);
+        self.cpu_state.execute_op(mem_hb_op);
+        self.push_command(mem_lb_op);
+        self.push_command(mem_hb_op);
+    }
+
     fn push_psw(&mut self) {
         let sp_op = Operation::RegisterPair(RegisterPairOperation {
             old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
@@ -1595,11 +1625,11 @@ impl CPU {
                 self.push_command(pc_op);
             }
             OpCode::Call => {
-                self.push_psw();
+                self.push_pc();
                 self.push_jmp();
             }
             OpCode::Cc => {
-                self.push_psw();
+                self.push_pc();
                 if self.get_flags().contains(Flags::CARRY) {
                     self.push_jmp();
                 } else {
@@ -1607,7 +1637,7 @@ impl CPU {
                 }
             }
             OpCode::Cnc => {
-                self.push_psw();
+                self.push_pc();
                 if !self.get_flags().contains(Flags::CARRY) {
                     self.push_jmp();
                 } else {
@@ -1615,7 +1645,7 @@ impl CPU {
                 }
             }
             OpCode::Cz => {
-                self.push_psw();
+                self.push_pc();
                 if self.get_flags().contains(Flags::ZERO) {
                     self.push_jmp();
                 } else {
@@ -1623,7 +1653,7 @@ impl CPU {
                 }
             }
             OpCode::Cnz => {
-                self.push_psw();
+                self.push_pc();
                 if !self.get_flags().contains(Flags::ZERO) {
                     self.push_jmp();
                 } else {
@@ -1631,7 +1661,7 @@ impl CPU {
                 }
             }
             OpCode::Cp => {
-                self.push_psw();
+                self.push_pc();
                 if !self.get_flags().contains(Flags::SIGN) {
                     self.push_jmp();
                 } else {
@@ -1639,7 +1669,7 @@ impl CPU {
                 }
             }
             OpCode::Cm => {
-                self.push_psw();
+                self.push_pc();
                 if self.get_flags().contains(Flags::SIGN) {
                     self.push_jmp()
                 } else {
@@ -1647,7 +1677,7 @@ impl CPU {
                 }
             }
             OpCode::Cpo => {
-                self.push_psw();
+                self.push_pc();
                 if !self.get_flags().contains(Flags::PARITY) {
                     self.push_jmp();
                 } else {
@@ -1655,7 +1685,7 @@ impl CPU {
                 }
             }
             OpCode::Cpe => {
-                self.push_psw();
+                self.push_pc();
                 if self.get_flags().contains(Flags::PARITY) {
                     self.push_jmp();
                 } else {

@@ -9,3 +9,14 @@ eframe = { version = "0.32.1", default-features = false, features = ["glow", "x1
 egui = { version = "0.32.1", default-features = false, features = [] }
 log = "0.4.27"
 thiserror = "2.0.12"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "emulation"
+harness = false
+
+[[bench]]
+name = "gui"
+harness = false

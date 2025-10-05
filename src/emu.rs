@@ -1,5 +1,5 @@
 use crate::common::{
-    pair_to_u16, u16_to_pair, OpCode, OpCodeError, Register, RegisterError, RegisterPair,
+    OpCode, OpCodeError, Register, RegisterError, RegisterPair, pair_to_u16, u16_to_pair,
 };
 use bitflags::bitflags;
 use std::cmp::Ordering;
@@ -363,6 +363,36 @@ impl CPU {
         pair_to_u16([value0, value1])
     }
 
+    fn push_psw(&mut self) {
+        let sp_op = Operation::RegisterPair(RegisterPairOperation {
+            old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+            new_value: self
+                .cpu_state
+                .get_register_pair(RegisterPair::SP)
+                .wrapping_sub(2),
+            register: RegisterPair::SP,
+        });
+
+        self.cpu_state.execute_op(sp_op);
+        self.push_command(sp_op);
+
+        let mem_lb_op = Operation::Memory(MemoryOperation {
+            address: self.cpu_state.get_address_sp().0,
+            old_value: u16_to_pair(self.cpu_state.get_memory_sp())[0],
+            new_value: self.cpu_state.get_flags().bits(),
+        });
+        let mem_hb_op = Operation::Memory(MemoryOperation {
+            address: self.cpu_state.get_address_sp().1,
+            old_value: u16_to_pair(self.cpu_state.get_memory_sp())[1],
+            new_value: self.cpu_state.get_register(Register::A),
+        });
+
+        self.cpu_state.execute_op(mem_lb_op);
+        self.cpu_state.execute_op(mem_hb_op);
+        self.push_command(mem_lb_op);
+        self.push_command(mem_hb_op);
+    }
+
     fn push_jmp(&mut self) {
         let address = self.read_double_bytes();
         let op = Operation::RegisterPair(RegisterPairOperation {
@@ -523,7 +553,7 @@ impl CPU {
     pub fn step_forward(&mut self) -> Result<(), StepError> {
         let instruction = self.read_byte();
         let opcode = OpCode::try_from(instruction)?;
-        
+
         match opcode {
             OpCode::Nop => {}
             OpCode::MovAA
@@ -1362,7 +1392,10 @@ impl CPU {
 
                 let sp_op = Operation::RegisterPair(RegisterPairOperation {
                     old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_sub(2),
+                    new_value: self
+                        .cpu_state
+                        .get_register_pair(RegisterPair::SP)
+                        .wrapping_sub(2),
                     register: RegisterPair::SP,
                 });
 
@@ -1388,37 +1421,12 @@ impl CPU {
                 self.push_command(mem_hb_op);
             }
             OpCode::PushPSW => {
-                let destination = (instruction & 0b00110000) >> 4;
-
-                if destination != 0b11 {
-                    return Err(StepError::RegisterPairError(destination));
+                let source = (instruction & 0b00110000) >> 4;
+                if source != 0b11 {
+                    return Err(StepError::RegisterPairError(source));
                 }
 
-                let [new_flags, new_a] = u16_to_pair(self.cpu_state.get_memory_sp());
-
-                let a_op = Operation::Register(RegisterOperation {
-                    old_value: self.cpu_state.get_register(Register::A),
-                    new_value: new_a,
-                    register: Register::A,
-                });
-                let flags_op = Operation::Flags(FlagsOperation {
-                    old_flags: self.cpu_state.get_flags(),
-                    new_flags: Flags::from_bits_truncate(new_flags),
-                });
-
-                self.cpu_state.execute_op(a_op);
-                self.cpu_state.execute_op(flags_op);
-                self.push_command(a_op);
-                self.push_command(flags_op);
-
-                let sp_op = Operation::RegisterPair(RegisterPairOperation {
-                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_add(2),
-                    register: RegisterPair::SP,
-                });
-
-                self.cpu_state.execute_op(sp_op);
-                self.push_command(sp_op);
+                self.push_psw();
             }
             OpCode::PopB | OpCode::PopD | OpCode::PopH => {
                 let destination = (instruction & 0b00110000) >> 4;
@@ -1440,7 +1448,39 @@ impl CPU {
 
                 let sp_op = Operation::RegisterPair(RegisterPairOperation {
                     old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
-                    new_value: self.cpu_state.get_register_pair(RegisterPair::SP).wrapping_add(2),
+                    new_value: self
+                        .cpu_state
+                        .get_register_pair(RegisterPair::SP)
+                        .wrapping_add(2),
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
+            }
+            OpCode::PopPSW => {
+                let [lower_byte, higher_byte] = u16_to_pair(self.cpu_state.get_memory_sp());
+                let flags_op = Operation::Flags(FlagsOperation {
+                    old_flags: self.cpu_state.get_flags(),
+                    new_flags: Flags::from_bits_retain(lower_byte),
+                });
+                let a_op = Operation::Register(RegisterOperation {
+                    old_value: self.cpu_state.get_register(Register::A),
+                    new_value: higher_byte,
+                    register: Register::A,
+                });
+
+                self.cpu_state.execute_op(flags_op);
+                self.cpu_state.execute_op(a_op);
+                self.push_command(flags_op);
+                self.push_command(a_op);
+
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self
+                        .cpu_state
+                        .get_register_pair(RegisterPair::SP)
+                        .wrapping_add(2),
                     register: RegisterPair::SP,
                 });
 
@@ -1471,6 +1511,16 @@ impl CPU {
                 self.push_command(mem_lb_op);
                 self.push_command(mem_hb_op);
                 self.push_command(hl_op);
+            }
+            OpCode::Sphl => {
+                let sp_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::SP),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                    register: RegisterPair::SP,
+                });
+
+                self.cpu_state.execute_op(sp_op);
+                self.push_command(sp_op);
             }
             OpCode::Jmp => {
                 self.push_jmp();
@@ -1529,6 +1579,84 @@ impl CPU {
             }
             OpCode::Jpo => {
                 if !self.cpu_state.get_flags().contains(Flags::PARITY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Pchl => {
+                let pc_op = Operation::RegisterPair(RegisterPairOperation {
+                    old_value: self.cpu_state.get_register_pair(RegisterPair::PC),
+                    new_value: self.cpu_state.get_register_pair(RegisterPair::HL),
+                    register: RegisterPair::PC,
+                });
+
+                self.cpu_state.execute_op(pc_op);
+                self.push_command(pc_op);
+            }
+            OpCode::Call => {
+                self.push_psw();
+                self.push_jmp();
+            }
+            OpCode::Cc => {
+                self.push_psw();
+                if self.get_flags().contains(Flags::CARRY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cnc => {
+                self.push_psw();
+                if !self.get_flags().contains(Flags::CARRY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cz => {
+                self.push_psw();
+                if self.get_flags().contains(Flags::ZERO) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cnz => {
+                self.push_psw();
+                if !self.get_flags().contains(Flags::ZERO) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cp => {
+                self.push_psw();
+                if !self.get_flags().contains(Flags::SIGN) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cm => {
+                self.push_psw();
+                if self.get_flags().contains(Flags::SIGN) {
+                    self.push_jmp()
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cpo => {
+                self.push_psw();
+                if !self.get_flags().contains(Flags::PARITY) {
+                    self.push_jmp();
+                } else {
+                    _ = self.read_double_bytes();
+                }
+            }
+            OpCode::Cpe => {
+                self.push_psw();
+                if self.get_flags().contains(Flags::PARITY) {
                     self.push_jmp();
                 } else {
                     _ = self.read_double_bytes();

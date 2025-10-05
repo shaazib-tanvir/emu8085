@@ -89,8 +89,8 @@ mod tests {
     fn program_parse() {
         let program = ".org 2000
 .start
-lxi h, 2050
-mov a, m";
+\tlxi h, 2050
+\tmov a, m";
         let program = Program::parse(program);
         assert!(program.is_ok(), "program did not parse: {:?}", program);
 
@@ -1374,6 +1374,7 @@ impl Program {
         let mut label_table = HashMap::new();
 
         for (line_number, line) in lines.enumerate() {
+            let line = line.trim_start();
             let line_split = line.split_once(":");
             let (label, line_unit);
             match line_split {

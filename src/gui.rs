@@ -11,48 +11,12 @@ use egui::{
     RichText, Sense, TextBuffer, TextEdit, Ui, Vec2, Widget, WidgetText, text::LayoutJob,
 };
 
-use crate::emu::{CPU, Flags, FlagsOperation, Operation, RegisterOperation, StepError};
+use crate::{base::split_tabs, emu::{Flags, FlagsOperation, Operation, RegisterOperation, StepError, CPU}};
 use crate::{asm::AssembledProgram, common::Register};
+use crate::base::{byte_to_hex};
 
 const ROW_COUNT: usize = 4;
 const COLUMN_COUNT: usize = 0x10;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn convert_nibble() {
-        assert_eq!(nibble_to_hex_digit(10), b'a');
-        assert_eq!(nibble_to_hex_digit(11), b'b');
-        assert_eq!(nibble_to_hex_digit(12), b'c');
-        assert_eq!(nibble_to_hex_digit(13), b'd');
-        assert_eq!(nibble_to_hex_digit(14), b'e');
-        assert_eq!(nibble_to_hex_digit(15), b'f');
-    }
-}
-
-#[inline]
-fn nibble_to_hex_digit(nibble: u8) -> u8 {
-    if nibble < 10 {
-        b'0' + nibble
-    } else {
-        b'a' + nibble - 10
-    }
-}
-
-#[inline]
-unsafe fn byte_to_hex(string: &mut str, value: u8) {
-    let mut value = value;
-    let lb = nibble_to_hex_digit(value % 16);
-    value /= 16;
-    let hb = nibble_to_hex_digit(value % 16);
-    unsafe {
-        let string = string.as_bytes_mut();
-        string[0] = hb;
-        string[1] = lb;
-    }
-}
 
 struct MemoryUIState {
     address: String,
@@ -201,6 +165,11 @@ impl<'editor> Widget for EditorWidget<'editor> {
                 LayoutJob::simple("".to_string(), FontId::default(), Color32::GRAY, wrap_width);
 
             for line in code_text.split_inclusive("\n") {
+                let (tabs, line) = split_tabs(line);
+                let line: &str = &line;
+
+                layout_job.append(&tabs.to_string(), 0.0, egui::TextFormat::default());
+
                 let (label, unit) = match line.split_once(":") {
                     Some(value) => (Some(value.0), value.1),
                     None => (None, line),
@@ -499,10 +468,61 @@ pub struct App {
     editor: Editor,
     register_ui: RegisterUIState,
     memory_ui: MemoryUIState,
-    duration: Arc<Mutex<u128>>,
 }
 
 impl App {
+    fn emulate_step(
+        paused: Arc<(Mutex<bool>, Condvar)>,
+        running: Arc<(Mutex<bool>, Condvar)>,
+        cpu: Arc<Mutex<CPU>>,
+        status_bar: Arc<Mutex<String>>,
+        ctx: egui::Context,
+    ) {
+        {
+            if *paused.0.lock().unwrap() {
+                let _guard = paused
+                    .1
+                    .wait_while(paused.0.lock().unwrap(), |condition| *condition)
+                    .unwrap();
+            }
+        }
+
+        loop {
+            {
+                if *paused.0.lock().unwrap() {
+                    let _guard = paused
+                        .1
+                        .wait_while(paused.0.lock().unwrap(), |condition| *condition)
+                        .unwrap();
+                }
+            }
+            {
+                if !*running.0.lock().unwrap() {
+                    break;
+                }
+            }
+
+            let mut cpu = cpu.lock().unwrap();
+            if let Err(err) = cpu.step_forward() {
+                match err {
+                    StepError::Halt => {
+                        *running.0.lock().unwrap() = false;
+                        running.1.notify_one();
+
+                        *status_bar.lock().unwrap() = PROGRAM_DONE_MESSAGE.to_string();
+                        ctx.request_repaint();
+                        break;
+                    }
+                    _ => {
+                        *status_bar.lock().unwrap() = err.to_string();
+                    }
+                };
+            };
+
+            ctx.request_repaint();
+        }
+    }
+
     pub fn new(creation_context: &CreationContext<'_>) -> Self {
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
@@ -529,10 +549,11 @@ impl App {
             running: Arc::new((Mutex::new(false), Condvar::new())),
             paused: Arc::new((Mutex::new(false), Condvar::new())),
             editor: Editor::new(),
-            duration: Arc::new(Mutex::new(0)),
         }
     }
 }
+
+const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -549,7 +570,6 @@ impl eframe::App for App {
                             let execute_button =
                                 Button::new(if !running || paused { "▶" } else { "⏸" });
                             let stop_button = Button::new("■");
-                            const PROGRAM_DONE_MESSAGE: &str = "program executed successfully";
 
                             if ui
                                 .add(execute_button)
@@ -586,65 +606,12 @@ impl eframe::App for App {
                                             let cpu = self.cpu.clone();
                                             let running = self.running.clone();
                                             let status_bar = self.editor.status_bar.clone();
-                                            let duration = self.duration.clone();
 
                                             let ctx = ctx.clone();
                                             thread::spawn(move || {
-                                                {
-                                                    if *paused.0.lock().unwrap() {
-                                                        let _guard = paused
-                                                            .1
-                                                            .wait_while(
-                                                                paused.0.lock().unwrap(),
-                                                                |condition| *condition,
-                                                            )
-                                                            .unwrap();
-                                                    }
-                                                }
-
-                                                loop {
-                                                    {
-                                                        if !*running.0.lock().unwrap() {
-                                                            break;
-                                                        }
-                                                    }
-                                                    {
-                                                        if *paused.0.lock().unwrap() {
-                                                            let _guard = paused
-                                                                .1
-                                                                .wait_while(
-                                                                    paused.0.lock().unwrap(),
-                                                                    |condition| *condition,
-                                                                )
-                                                                .unwrap();
-                                                        }
-                                                    }
-
-                                                    let old = Instant::now();
-                                                    let mut cpu = cpu.lock().unwrap();
-                                                    if let Err(err) = cpu.step_forward() {
-                                                        match err {
-                                                            StepError::Halt => {
-                                                                *running.0.lock().unwrap() = false;
-                                                                running.1.notify_one();
-
-                                                                *status_bar.lock().unwrap() =
-                                                                    PROGRAM_DONE_MESSAGE
-                                                                        .to_string();
-                                                                ctx.request_repaint();
-                                                                break;
-                                                            }
-                                                            _ => {
-                                                                *status_bar.lock().unwrap() =
-                                                                    err.to_string();
-                                                            }
-                                                        };
-                                                    };
-
-                                                    ctx.request_repaint();
-                                                    let elapsed = Instant::now() - old;
-                                                    *duration.lock().unwrap() = elapsed.as_nanos();
-                                                }
+                                                App::emulate_step(
+                                                    paused, running, cpu, status_bar, ctx,
+                                                );
                                             });
                                         }
                                         Err(err) => {
@@ -691,7 +658,6 @@ impl eframe::App for App {
                     });
                     egui::TopBottomPanel::bottom("Status Bar Panel").show_inside(ui, |ui| {
                         ui.allocate_space(ui.spacing().item_spacing);
-                        ui.label(format!("{}", self.duration.lock().unwrap()));
                         ui.label(self.editor.status_bar.lock().unwrap().to_string());
                     });
                     ui.add(EditorWidget::new(&mut self.editor, !running));

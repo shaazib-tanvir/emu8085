@@ -391,6 +391,89 @@ fn parse_rm(operands: &str) -> Result<RegMem, OperandParseError> {
     Ok(rm)
 }
 
+#[inline]
+fn translate_const_no_data(
+    operands: Option<String>,
+    opcode: OpCode,
+) -> Result<Instruction, InstructionError> {
+    if operands.is_some() {
+        return Err(InstructionError::OperandParse(OperandParseError::NoOp));
+    }
+
+    Ok(Instruction::NoData(InstructionNoData { opcode }))
+}
+
+#[inline]
+fn translate_const_im_byte(
+    operands: Option<String>,
+    opcode: OpCode,
+) -> Result<Instruction, InstructionError> {
+    if operands.is_none() {
+        return Err(InstructionError::OperandParse(
+            OperandParseError::InsufficientOperands {
+                expected: 1,
+                got: 0,
+            },
+        ));
+    }
+
+    let operands = operands.unwrap();
+    let value = parse_byte(&operands)?;
+
+    Ok(Instruction::ImByte(InstructionImByte {
+        opcode,
+        operand: value,
+    }))
+}
+
+#[inline]
+fn translate_rm_no_data(
+    operands: Option<String>,
+    code: u8,
+    shift: u8,
+) -> Result<Instruction, InstructionError> {
+    if operands.is_none() {
+        return Err(InstructionError::OperandParse(
+            OperandParseError::InsufficientOperands {
+                expected: 1,
+                got: 0,
+            },
+        ));
+    }
+
+    let operands = operands.unwrap();
+    let rm = parse_rm(&operands)?;
+
+    let opcode = code + ((rm as u8) << shift);
+    let opcode = OpCode::try_from(opcode).unwrap();
+
+    Ok(Instruction::NoData(InstructionNoData { opcode }))
+}
+
+#[inline]
+fn translate_rp_no_data(
+    operands: Option<String>,
+    code: u8,
+    shift: u8,
+) -> Result<Instruction, InstructionError> {
+    if operands.is_none() {
+        return Err(InstructionError::OperandParse(
+            OperandParseError::InsufficientOperands {
+                expected: 1,
+                got: 0,
+            },
+        ));
+    }
+
+    let operands = operands.unwrap();
+    let rp = parse_rp(&operands)?;
+
+    let opcode = code + ((rp as u8) << shift);
+    let opcode = OpCode::try_from(opcode).unwrap();
+
+    Ok(Instruction::NoData(InstructionNoData { opcode }))
+}
+
 impl Instruction {
     fn parse(line: &str) -> Result<Self, InstructionError> {
         let line_split = line.split_once(" ");
@@ -575,15 +658,7 @@ impl Instruction {
                     operand: value,
                 }))
             }
-            "xchg" => {
-                if operands.is_some() {
-                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
-                }
-
-                Ok(Instruction::NoData(InstructionNoData {
-                    opcode: OpCode::Xchg,
-                }))
-            }
+            "xchg" => translate_const_no_data(operands, OpCode::Xchg),
             "push" => {
                 if operands.is_none() {
                     return Err(InstructionError::OperandParse(
@@ -596,9 +671,16 @@ impl Instruction {
 
                 let operands = operands.unwrap();
                 let value = parse_rp(&operands)?;
-                let opcode = 0b11000101 + ((value as u8) << 4);
-                let opcode = OpCode::try_from(opcode).unwrap();
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                match value as u8 {
+                    0b11 => Ok(Instruction::NoData(InstructionNoData {
+                        opcode: OpCode::PushPSW,
+                    })),
+                    _ => {
+                        let opcode = 0b11000101 + ((value as u8) << 4);
+                        let opcode = OpCode::try_from(opcode).unwrap();
+                        Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                    }
+                }
             }
             "pop" => {
                 if operands.is_none() {
@@ -612,458 +694,45 @@ impl Instruction {
 
                 let operands = operands.unwrap();
                 let value = parse_rp(&operands)?;
-                let opcode = 0b11000001 + ((value as u8) << 4);
-                let opcode = OpCode::try_from(opcode).unwrap();
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
-            }
-            "xthl" => {
-                if operands.is_some() {
-                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
+                match value as u8 {
+                    0b11 => Ok(Instruction::NoData(InstructionNoData {
+                        opcode: OpCode::PopPSW,
+                    })),
+                    _ => {
+                        let opcode = 0b11000001 + ((value as u8) << 4);
+                        let opcode = OpCode::try_from(opcode).unwrap();
+                        Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
+                    }
                 }
-                let opcode = OpCode::Xthl;
-                Ok(Instruction::NoData(InstructionNoData { opcode: opcode }))
             }
-            "jmp" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jmp;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jc" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jc;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jnc" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jnc;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jz" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jz;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jnz" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jnz;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jp" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jp;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jm" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jm;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jpe" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jpe;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "jpo" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Jpo;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "pchl" => {
-                if operands.is_some() {
-                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
-                }
-
-                Ok(Instruction::NoData(InstructionNoData {
-                    opcode: OpCode::Pchl,
-                }))
-            }
-            "inr" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b00000100 + ((rm as u8) << 3);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "dcr" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b00000101 + ((rm as u8) << 3);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "inx" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rp = parse_rp(&operands)?;
-
-                let opcode = 0b00000011 + ((rp as u8) << 4);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "dcx" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rp = parse_rp(&operands)?;
-
-                let opcode = 0b00001011 + ((rp as u8) << 4);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "add" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b10000000 + (rm as u8);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "adc" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b10001000 + (rm as u8);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "adi" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_byte(&operands)?;
-
-                Ok(Instruction::ImByte(InstructionImByte {
-                    opcode: OpCode::Aci,
-                    operand: value,
-                }))
-            }
-            "aci" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_byte(&operands)?;
-
-                Ok(Instruction::ImByte(InstructionImByte {
-                    opcode: OpCode::Aci,
-                    operand: value,
-                }))
-            }
-            "dad" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rp = parse_rp(&operands)?;
-
-                let opcode = 0b00001001 + ((rp as u8) << 4);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "sub" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b10010000 + (rm as u8);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "cmp" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b10111000 + (rm as u8);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "sbb" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let rm = parse_rm(&operands)?;
-
-                let opcode = 0b10011000 + (rm as u8);
-                let opcode = OpCode::try_from(opcode).unwrap();
-
-                Ok(Instruction::NoData(InstructionNoData { opcode }))
-            }
-            "sui" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_byte(&operands)?;
-
-                Ok(Instruction::ImByte(InstructionImByte {
-                    opcode: OpCode::Sui,
-                    operand: value,
-                }))
-            }
-            "sbi" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_byte(&operands)?;
-
-                Ok(Instruction::ImByte(InstructionImByte {
-                    opcode: OpCode::Sbi,
-                    operand: value,
-                }))
-            }
-            "hlt" => {
-                if operands.is_some() {
-                    return Err(InstructionError::OperandParse(OperandParseError::NoOp));
-                }
-
-                Ok(Instruction::NoData(InstructionNoData {
-                    opcode: OpCode::Hlt,
-                }))
-            }
+            "xthl" => translate_const_no_data(operands, OpCode::Xthl),
+            "jmp" => translate_const_im_byte(operands, OpCode::Jmp),
+            "jc" => translate_const_im_byte(operands, OpCode::Jc),
+            "jnc" => translate_const_im_byte(operands, OpCode::Jnc),
+            "jz" => translate_const_im_byte(operands, OpCode::Jz),
+            "jnz" => translate_const_im_byte(operands, OpCode::Jnz),
+            "jp" => translate_const_im_byte(operands, OpCode::Jp),
+            "jm" => translate_const_im_byte(operands, OpCode::Jm),
+            "jpe" => translate_const_im_byte(operands, OpCode::Jpe),
+            "jpo" => translate_const_im_byte(operands, OpCode::Jpo),
+            "pchl" => translate_const_no_data(operands, OpCode::Pchl),
+            "inr" => translate_rm_no_data(operands, 0b00000100, 3),
+            "dcr" => translate_rm_no_data(operands, 0b00000101, 3),
+            "inx" => translate_rp_no_data(operands, 0b00000011, 4),
+            "dcx" => translate_rp_no_data(operands, 0b00001011, 4),
+            "add" => translate_rm_no_data(operands, 0b10000000, 0),
+            "adc" => translate_rm_no_data(operands, 0b10001000, 0),
+            "adi" => translate_const_im_byte(operands, OpCode::Adi),
+            "aci" => translate_const_im_byte(operands, OpCode::Aci),
+            "dad" => translate_rp_no_data(operands, 0b00001001, 4),
+            "sub" => translate_rm_no_data(operands, 0b10010000, 0),
+            "ana" => translate_rm_no_data(operands, 0b10100000, 0),
+            "xra" => translate_rm_no_data(operands, 0b10101000, 0),
+            "cmp" => translate_rm_no_data(operands, 0b10111000, 0),
+            "sbb" => translate_rm_no_data(operands, 0b10011000, 0),
+            "sui" => translate_const_im_byte(operands, OpCode::Sui),
+            "sbi" => translate_const_im_byte(operands, OpCode::Sbi),
+            "hlt" => translate_const_no_data(operands, OpCode::Hlt),
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }
     }

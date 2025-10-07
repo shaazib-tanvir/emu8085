@@ -1,6 +1,7 @@
 .org 2050
-data: .db 8
-.db 2
+data:
+	.db 8
+	.db 2
 
 .org 2000
 .start

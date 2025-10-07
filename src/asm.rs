@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::fs::read_to_string;
+use std::fs::{read_to_string, File};
+use std::io::{Read, Write};
 use std::{num::ParseIntError, path::Path};
 
 use crate::common::{OpCode, RegMem, RegMemError, RegisterPair, RegisterPairError, u16_to_pair};
@@ -1214,25 +1215,60 @@ impl AssembledProgram {
         &self.segments
     }
 
-    // pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
-    //     let mut file = fs::File::create(&path)?;
-    //     file.write_all(&u16_to_pair(self.get_entrypoint()))?;
-    //     file.write_all(&self.memory)?;
-    //
-    //     Ok(())
-    // }
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        let mut file = File::create(&path)?;
 
-    // pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-    //     let mut memory: [u8; 0x10000] = [0; 0x10000];
-    //     let mut entrypoint: [u8; 2] = [0; 2];
-    //
-    //     let mut file = fs::File::open(&path)?;
-    //     file.read_exact(&mut entrypoint)?;
-    //     file.read_exact(&mut memory)?;
-    //
-    //     Ok(AssembledProgram {
-    //         entrypoint: pair_to_u16(entrypoint),
-    //         memory,
-    //     })
-    // }
+        file.write_all(&u16::to_le_bytes(self.entrypoint))?;
+        file.write_all(&u64::to_le_bytes(self.segments.len() as u64))?;
+
+        for segment in &self.segments {
+            file.write_all(&u16::to_le_bytes(segment.address))?;
+            file.write_all(&u64::to_le_bytes(segment.data.len() as u64))?;
+            for byte in &segment.data {
+                file.write_all(&[*byte])?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let mut file = File::open(&path)?;
+
+        let mut buffer: [u8; 2] = [0; 2];
+        file.read_exact(&mut buffer)?;
+        let entrypoint = u16::from_le_bytes(buffer);
+
+        let mut buffer: [u8; 8] = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let segment_length = u64::from_le_bytes(buffer) as usize;
+
+        let mut segments = vec![];
+        for _ in 0..segment_length {
+            let mut buffer: [u8; 2] = [0; 2];
+            file.read_exact(&mut buffer)?;
+            let address = u16::from_le_bytes(buffer);
+
+            let mut buffer: [u8; 8] = [0; 8];
+            file.read_exact(&mut buffer)?;
+            let data_length = u64::from_le_bytes(buffer) as usize;
+
+            let mut data = vec![0; data_length];
+            for i in 0..data_length {
+                let mut buffer: [u8; 1] = [0; 1];
+                file.read_exact(&mut buffer)?;
+                data[i] = u8::from_le_bytes(buffer);
+            }
+
+            segments.push(Segment {
+                address,
+                data,
+            });
+        }
+
+        Ok(AssembledProgram {
+            entrypoint,
+            segments,
+        })
+    }
 }

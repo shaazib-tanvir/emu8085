@@ -2,7 +2,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::{Arc, Condvar, Mutex},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use eframe::CreationContext;

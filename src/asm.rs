@@ -404,6 +404,29 @@ fn translate_const_no_data(
 }
 
 #[inline]
+fn translate_const_word(
+    operands: Option<String>,
+    opcode: OpCode,
+) -> Result<Instruction, InstructionError> {
+    if operands.is_none() {
+        return Err(InstructionError::OperandParse(
+            OperandParseError::InsufficientOperands {
+                expected: 1,
+                got: 0,
+            },
+        ));
+    }
+
+    let operands = operands.unwrap();
+    let value = parse_word(&operands)?;
+
+    Ok(Instruction::ImWord(InstructionImWord {
+        opcode,
+        operand: value,
+    }))
+}
+
+#[inline]
 fn translate_const_im_byte(
     operands: Option<String>,
     opcode: OpCode,
@@ -582,82 +605,10 @@ impl Instruction {
 
                 Ok(Instruction::NoData(InstructionNoData { opcode }))
             }
-            "sta" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Sta;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "lda" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Lda;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "shld" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Shld;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
-            "lhld" => {
-                if operands.is_none() {
-                    return Err(InstructionError::OperandParse(
-                        OperandParseError::InsufficientOperands {
-                            expected: 1,
-                            got: 0,
-                        },
-                    ));
-                }
-
-                let operands = operands.unwrap();
-                let value = parse_word(&operands)?;
-                let opcode = OpCode::Lhld;
-
-                Ok(Instruction::ImWord(InstructionImWord {
-                    opcode,
-                    operand: value,
-                }))
-            }
+            "sta" => translate_const_word(operands, OpCode::Sta),
+            "lda" => translate_const_word(operands, OpCode::Lda),
+            "shld" => translate_const_word(operands, OpCode::Shld),
+            "lhld" => translate_const_word(operands, OpCode::Lhld),
             "xchg" => translate_const_no_data(operands, OpCode::Xchg),
             "push" => {
                 if operands.is_none() {
@@ -706,6 +657,7 @@ impl Instruction {
                 }
             }
             "xthl" => translate_const_no_data(operands, OpCode::Xthl),
+            "sphl" => translate_const_no_data(operands, OpCode::Sphl),
             "jmp" => translate_const_im_byte(operands, OpCode::Jmp),
             "jc" => translate_const_im_byte(operands, OpCode::Jc),
             "jnc" => translate_const_im_byte(operands, OpCode::Jnc),
@@ -716,6 +668,24 @@ impl Instruction {
             "jpe" => translate_const_im_byte(operands, OpCode::Jpe),
             "jpo" => translate_const_im_byte(operands, OpCode::Jpo),
             "pchl" => translate_const_no_data(operands, OpCode::Pchl),
+            "call" => translate_const_word(operands, OpCode::Call),
+            "cc" => translate_const_word(operands, OpCode::Cc),
+            "cnc" => translate_const_word(operands, OpCode::Cnc),
+            "cz" => translate_const_word(operands, OpCode::Cz),
+            "cnz" => translate_const_word(operands, OpCode::Cnz),
+            "cp" => translate_const_word(operands, OpCode::Cp),
+            "cm" => translate_const_word(operands, OpCode::Cm),
+            "cpe" => translate_const_word(operands, OpCode::Cpe),
+            "cpo" => translate_const_word(operands, OpCode::Cpo),
+            "ret" => translate_const_word(operands, OpCode::Ret),
+            "rc" => translate_const_word(operands, OpCode::Rc),
+            "rnc" => translate_const_word(operands, OpCode::Rnc),
+            "rz" => translate_const_word(operands, OpCode::Rz),
+            "rnz" => translate_const_word(operands, OpCode::Rnz),
+            "rp" => translate_const_word(operands, OpCode::Rp),
+            "rm" => translate_const_word(operands, OpCode::Rm),
+            "rpe" => translate_const_word(operands, OpCode::Rpe),
+            "rpo" => translate_const_word(operands, OpCode::Rpo),
             "inr" => translate_rm_no_data(operands, 0b00000100, 3),
             "dcr" => translate_rm_no_data(operands, 0b00000101, 3),
             "inx" => translate_rp_no_data(operands, 0b00000011, 4),
@@ -726,12 +696,25 @@ impl Instruction {
             "aci" => translate_const_im_byte(operands, OpCode::Aci),
             "dad" => translate_rp_no_data(operands, 0b00001001, 4),
             "sub" => translate_rm_no_data(operands, 0b10010000, 0),
-            "ana" => translate_rm_no_data(operands, 0b10100000, 0),
-            "xra" => translate_rm_no_data(operands, 0b10101000, 0),
-            "cmp" => translate_rm_no_data(operands, 0b10111000, 0),
             "sbb" => translate_rm_no_data(operands, 0b10011000, 0),
             "sui" => translate_const_im_byte(operands, OpCode::Sui),
             "sbi" => translate_const_im_byte(operands, OpCode::Sbi),
+            "ana" => translate_rm_no_data(operands, 0b10100000, 0),
+            "xra" => translate_rm_no_data(operands, 0b10101000, 0),
+            "ora" => translate_rm_no_data(operands, 0b10110110, 0),
+            "cmp" => translate_rm_no_data(operands, 0b10111000, 0),
+            "ani" => translate_const_im_byte(operands, OpCode::Ani),
+            "xri" => translate_const_im_byte(operands, OpCode::Xri),
+            "ori" => translate_const_im_byte(operands, OpCode::Ori),
+            "cpi" => translate_const_im_byte(operands, OpCode::Cpi),
+            "rlc" => translate_const_no_data(operands, OpCode::Rlc),
+            "rrc" => translate_const_no_data(operands, OpCode::Rrc),
+            "ral" => translate_const_no_data(operands, OpCode::Ral),
+            "rar" => translate_const_no_data(operands, OpCode::Rar),
+            "cma" => translate_const_no_data(operands, OpCode::Cma),
+            "stc" => translate_const_no_data(operands, OpCode::Stc),
+            "cmc" => translate_const_no_data(operands, OpCode::Cmc),
+            "nop" => translate_const_no_data(operands, OpCode::Nop),
             "hlt" => translate_const_no_data(operands, OpCode::Hlt),
             _ => Err(InstructionError::UnknownMnemonic(mnemonic.to_string())),
         }

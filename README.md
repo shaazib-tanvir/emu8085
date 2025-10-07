@@ -10,12 +10,16 @@
 
 - [x] Arithmetic & Logic Instructions
 - [x] Jump Instructions
-- [ ] Stack Instructions
-- [ ] Function Calling
+- [x] Stack Instructions
+- [x] Function Calling
 - [x] Assembler Instructions
 - [x] Assembler Directives
 - [x] Assembler Algorithm
-- [x] GUI
+- [x] Basic GUI
+- [ ] I/O
+- [ ] Debugger
+- [ ] Saving & Loading
+- [ ] Advanced Directives
 
 ### Contribution
 

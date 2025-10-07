@@ -20,3 +20,7 @@ harness = false
 [[bench]]
 name = "gui"
 harness = false
+
+[[bench]]
+name = "assembler"
+harness = false

@@ -21,6 +21,15 @@
 - [ ] Saving & Loading
 - [ ] Advanced Directives
 
+### Getting Started 
+
+- Everything is case-sensetive
+- All numbers are in hex
+- You need to prefix directives with .
+- You need to put a : for labels
+- org directive changes the address
+- start directive specifies the entrypoint
+
 ### Contribution
 
 If you're looking to contribute feel free to make a PR!
